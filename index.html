@@ -1,0 +1,2570 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="RepMemo"/>
+  <meta name="theme-color" content="#07050f"/>
+  <link rel="manifest" href="manifest.webmanifest"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"/>
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png"/>
+  <meta name="theme-color" content="#07050f"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="RepMemo"/>
+  <title>RepMemo</title>
+  <script src="vendor/react.production.min.js"></script>
+  <script src="vendor/react-dom.production.min.js"></script>
+  <script src="vendor/htm.umd.js"></script>
+  <style>
+    @font-face { font-family: 'Barlow Condensed'; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/barlow-condensed-latin-700-normal.woff2) format('woff2'); }
+    @font-face { font-family: 'Barlow Condensed'; font-style: normal; font-weight: 800; font-display: swap; src: url(fonts/barlow-condensed-latin-800-normal.woff2) format('woff2'); }
+    @font-face { font-family: 'Barlow Condensed'; font-style: italic; font-weight: 800; font-display: swap; src: url(fonts/barlow-condensed-latin-800-italic.woff2) format('woff2'); }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #07050f; font-family: -apple-system, 'Helvetica Neue', sans-serif; color: #eceaf8; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+    input, select, textarea { font-family: inherit; -webkit-appearance: none; }
+    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+    input[type=checkbox] { -webkit-appearance: checkbox; appearance: auto; accent-color: #8a6dff; flex-shrink: 0; }
+    button { font-family: inherit; transition: transform .08s ease; }
+    button:active { transform: scale(.96); }
+    button:focus-visible { outline: 2px solid #8a6dff; outline-offset: 2px; }
+    @keyframes pop { 0% { transform: scale(.7); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
+    @keyframes rise { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-thumb { background: #27273f; border-radius: 3px; }
+  </style>
+</head>
+<body>
+<div id="root">
+  <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:10px">
+    <div style="font-size:30px;font-weight:800;color:#7b6ef6">RepMemo</div>
+    <div style="color:#7070a0;font-size:14px">Chargement...</div>
+  </div>
+</div>
+
+<script>
+// ─── globals ────────────────────────────────────────────────
+const html = htm.bind(React.createElement);
+const { useState, useEffect, useRef, useMemo, useContext, createContext } = React;
+
+window.onerror = function(msg, src, line, col) {
+  document.getElementById('root').innerHTML =
+    '<div style="padding:24px;color:#f87171;font-size:13px;line-height:1.8;background:#0b0b13;min-height:100vh">' +
+    '<div style="font-size:18px;font-weight:700;margin-bottom:12px">❌ Erreur</div>' +
+    '<div style="background:#1f1f35;border-radius:10px;padding:12px;word-break:break-all;margin-bottom:8px">' + msg + '</div>' +
+    '<div>Ligne ' + line + ' · Col ' + col + '</div>' +
+    '</div>';
+  return true;
+};
+
+// ─── storage ────────────────────────────────────────────────
+window.storage = {
+  get(k) {
+    return new Promise((res, rej) => {
+      const v = localStorage.getItem(k);
+      v !== null ? res({ value: v }) : rej('nf');
+    });
+  },
+  set(k, v) {
+    return new Promise(res => { localStorage.setItem(k, v); res({ key: k, value: v }); });
+  },
+  delete(k) {
+    return new Promise(res => { localStorage.removeItem(k); res({ key: k }); });
+  }
+};
+
+const DB = {
+  async get(k, d) {
+    try { const r = await window.storage.get(k); return JSON.parse(r.value); }
+    catch { return d; }
+  },
+  async set(k, v) {
+    try { await window.storage.set(k, JSON.stringify(v)); } catch { try { window.dispatchEvent(new Event('rm-save-error')); } catch {} }
+  }
+};
+
+// ─── utils ──────────────────────────────────────────────────
+const uid = () => Math.random().toString(36).slice(2, 9);
+const nowISO = () => new Date().toISOString();
+const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+const today = () => ymd(new Date());
+const fmtDate = d => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+const fmtS = d => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+const fmtFull = d => new Date(d).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+const oneRM = (w, r) => r <= 1 ? +w : Math.round(+w * (1 + +r / 30));
+const beep = () => {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    [0, .18, .36].forEach(t => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.connect(g); g.connect(ac.destination);
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(.3, ac.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(.001, ac.currentTime + t + .15);
+      o.start(ac.currentTime + t); o.stop(ac.currentTime + t + .15);
+    });
+  } catch {}
+};
+
+// ─── theme ──────────────────────────────────────────────────
+const ThemeCtx = createContext(null);
+const useC = () => useContext(ThemeCtx);
+const FD = "'Barlow Condensed','Oswald','Arial Narrow','Helvetica Neue',sans-serif";
+const DARK = { bg:'#07050f', bgImg:'radial-gradient(900px 420px at 88% -140px, rgba(255,61,154,.20), transparent 70%), radial-gradient(800px 420px at 0% -90px, rgba(124,92,255,.30), transparent 70%)', surface:'rgba(14,9,32,.86)', card:'#130e2e', card2:'#1c1646', border:'#2b2362', accent:'#8a6dff', accent2:'#ff3d9a', grad:'linear-gradient(135deg,#7c5cff 0%,#c24bd6 55%,#ff3d9a 100%)', aGlow:'rgba(138,109,255,.22)', green:'#2ee6a6', amber:'#ffc53d', red:'#ff5a6e', text:'#f6f3ff', muted:'#8f88bd' };
+const LIGHT = { bg:'#f5f2ff', bgImg:'radial-gradient(900px 420px at 88% -140px, rgba(255,61,154,.12), transparent 70%), radial-gradient(800px 420px at 0% -90px, rgba(124,92,255,.16), transparent 70%)', surface:'rgba(255,255,255,.9)', card:'#ffffff', card2:'#eeeaff', border:'#d9d2f7', accent:'#6a46ff', accent2:'#e6247f', grad:'linear-gradient(135deg,#6a46ff 0%,#b43fd0 55%,#e6247f 100%)', aGlow:'rgba(106,70,255,.12)', green:'#0a9f6e', amber:'#d98a00', red:'#d93a50', text:'#140f33', muted:'#7a72a8' };
+
+const card = C => ({ background: C.card, borderRadius: 18, padding: 16, border: '1px solid ' + C.border, boxShadow: '0 1px 0 rgba(255,255,255,.035) inset' });
+const btnS = (C, bg, col) => ({ background: bg || C.grad, color: col || '#fff', border: 'none', borderRadius: 14, padding: '13px 20px', cursor: 'pointer', fontWeight: 800, fontSize: 15, width: '100%', display: 'block', boxShadow: bg ? 'none' : '0 8px 22px rgba(124,92,255,.35)' });
+const inpS = C => ({ background: C.card2, color: C.text, border: '1px solid ' + C.border, borderRadius: 12, padding: '10px 14px', fontSize: 15, outline: 'none', width: '100%', boxSizing: 'border-box' });
+const tagS = (C, col) => ({ background: (col || C.accent) + '25', color: col || C.accent, borderRadius: 6, padding: '3px 9px', fontSize: 12, fontWeight: 700, display: 'inline-block' });
+const chipS = C => ({ background: 'rgba(255,255,255,.07)', color: C.muted, borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 500, display: 'inline-block' });
+
+// ─── data ───────────────────────────────────────────────────
+const MUSCLES = ['Pectoraux','Dos','Epaules','Biceps','Triceps','Jambes','Fessiers','Abdos','Cardio','Autre'];
+const ICONS = ['💪','🔗','🦵','🏋️','⬆️','⬇️','🔥','⚡','🎯','🏆','💥','🧠'];
+const REST_OPT = [{ l: '30s', v: 30 }, { l: '1min', v: 60 }, { l: '90s', v: 90 }, { l: '2min', v: 120 }, { l: '3min', v: 180 }];
+const MEASURES = [
+  { key: 'brasD', label: 'Bras D (contracté)' }, { key: 'brasG', label: 'Bras G (contracté)' },
+  { key: 'brasLong', label: 'Bras long du corps' }, { key: 'avantBras', label: 'Avant-bras (contracté)' },
+  { key: 'avantBrasR', label: 'Avant-bras (repos)' }, { key: 'abdo', label: 'Abdominaux' },
+  { key: 'pec', label: 'Pectoraux' }, { key: 'epaule', label: 'Épaules' },
+  { key: 'cuisse', label: 'Cuisse' }, { key: 'fesses', label: 'Fesses' }
+];
+const LEVELS = [
+  { min:0, max:5, name:'Rookie', icon:'🌱', col:'#6ee7b7' },
+  { min:5, max:20, name:'Débutant', icon:'💪', col:'#60a5fa' },
+  { min:20, max:50, name:'Intermédiaire', icon:'⚡', col:'#a78bfa' },
+  { min:50, max:100, name:'Avancé', icon:'🔥', col:'#f97316' },
+  { min:100, max:9999, name:'Elite', icon:'🏆', col:'#fbbf24' }
+];
+const getLevel = n => LEVELS.find(l => n >= l.min && n < l.max) || LEVELS[LEVELS.length - 1];
+
+const SEED_EX = [
+  { id:'e1', name:'Developpe couche', muscleGroup:'Pectoraux', notes:'', bilateral:false, goalWeight:null, createdAt:nowISO() },
+  { id:'e2', name:'Squat barre', muscleGroup:'Jambes', notes:'', bilateral:false, goalWeight:null, createdAt:nowISO() },
+  { id:'e3', name:'Tractions', muscleGroup:'Dos', notes:'Prise large', bilateral:false, goalWeight:null, createdAt:nowISO() },
+  { id:'e4', name:'Developpe militaire', muscleGroup:'Epaules', notes:'', bilateral:false, goalWeight:null, createdAt:nowISO() },
+  { id:'e5', name:'Curl biceps', muscleGroup:'Biceps', notes:'', bilateral:true, goalWeight:null, createdAt:nowISO() },
+  { id:'e6', name:'Dips', muscleGroup:'Triceps', notes:'', bilateral:false, goalWeight:null, createdAt:nowISO() },
+  { id:'e7', name:'Rowing barre', muscleGroup:'Dos', notes:'', bilateral:false, goalWeight:null, createdAt:nowISO() },
+  { id:'e8', name:'Elevations laterales', muscleGroup:'Epaules', notes:'Sans elan', bilateral:true, goalWeight:null, createdAt:nowISO() },
+  { id:'e9', name:'Leg press', muscleGroup:'Jambes', notes:'', bilateral:false, goalWeight:null, createdAt:nowISO() },
+  { id:'e10', name:'Deadlift', muscleGroup:'Dos', notes:'', bilateral:false, goalWeight:null, createdAt:nowISO() }
+];
+const SEED_TPL = [
+  { id:'t1', name:'Push', icon:'💪', exerciseIds:['e1','e4','e8','e6'] },
+  { id:'t2', name:'Pull', icon:'🔗', exerciseIds:['e3','e7','e5'] },
+  { id:'t3', name:'Legs', icon:'🦵', exerciseIds:['e2','e9','e10'] },
+  { id:'t4', name:'Full Body', icon:'🏋️', exerciseIds:['e2','e1','e7','e4'] }
+];
+
+// ─── programme force (développé décliné haltères) ────────────
+const DB_WEIGHTS = [35, 40, 45, 50];
+const EX_DBDECL = { id:'e11', name:'Developpe decline halteres', muscleGroup:'Pectoraux', notes:'Charge par haltere. Mise en place : haltères sur les cuisses, bascule en arrière.', bilateral:false, perDb:true, goalWeight:50, createdAt:nowISO() };
+// Programme Push / Pull / Legs + course : rotation de 7 séances
+const ROT = ['pa', 'c1', 't2', 't3', 'pb', 'pb2', 'c2'];
+const ROT_LBL = { pa:'Push A', c1:'Course 1', t2:'Pull A', t3:'Legs', pb:'Push B', pb2:'Pull B', c2:'Course 2' };
+// lbl = numéro du poste, n = séries, r = reps, rir, rest = repos en s (0 = enchaîné), ss = poste enchaîné suivant
+const PL = (lbl, n, r, rir, rest, o) => ({ lbl, n, r, rir, rest, ...(o || {}) });
+const XD = (id, name, muscleGroup, repMax, o) => ({ id, name, muscleGroup, notes:'', bilateral:false, goalWeight:null, repMax, createdAt:nowISO(), ...(o || {}) });
+const PROG_EX = [
+  XD('x1', 'Arrière d\'épaule, pec deck inversé', 'Epaules', 15),
+  XD('x2', 'Écarté poulie vis-à-vis', 'Pectoraux', 15),
+  XD('x3', 'Élévations latérales à la poulie', 'Epaules', 20),
+  XD('x4', 'Tirage planche', 'Dos', 10),
+  XD('x5', 'Curl barre EZ', 'Biceps', 10, { step:2.5 }),
+  XD('x6', 'Face pull à la corde', 'Epaules', 15),
+  XD('x7', 'Crunch à la poulie haute', 'Abdos', 12, { notes:'À genoux, charge lourde, enroule la colonne côtes vers le bassin, hanches fixes.' }),
+  XD('x8', 'Relevé de jambes', 'Abdos', 12, { bw:true, notes:'En appui sur les avant-bras. Ajoute un haltère entre les pieds quand 12 reps passent.' }),
+  XD('x9', 'Leg curl assis', 'Jambes', 12),
+  XD('x10', 'Leg extension', 'Jambes', 15),
+  XD('x11', 'Belt squat', 'Jambes', 10, { notes:'Charge à la ceinture, colonne déchargée. Dernière série possible à l\'échec.' }),
+  XD('x12', 'Développé incliné haltères', 'Pectoraux', 10, { unit:'kg / haltère', notes:'Banc à 30°.' }),
+  XD('x13', 'Extension triceps poulie, au-dessus de la tête', 'Triceps', 12),
+  XD('x14', 'Roulette abdominale', 'Abdos', 0, { bw:true, notes:'Bassin rétroversé, dos jamais creusé.' }),
+  XD('x15', 'Rotation à la poulie, haut vers bas', 'Abdos', 12, { bilateral:true }),
+  XD('x16', 'Tirage vertical, prise neutre', 'Dos', 12),
+  XD('x17', 'Curl marteau haltères', 'Biceps', 12, { unit:'kg / haltère' }),
+  XD('x18', 'Curl poulie, bras en arrière', 'Biceps', 12, { notes:'Pieds décalés, buste légèrement penché, coudes en arrière pendant toute la montée.' })
+];
+const EX_PATCH = {
+  e3: { notes:'Lestées, prise pronation', bw:true },
+  e4: { notes:'À la Smith' },
+  e6: { notes:'Lestés', bw:true },
+  e8: { unit:'kg / haltère' }
+};
+const TPL_PA = { id:'pa', name:'Push A', icon:'💪', exerciseIds:['e11','e4','e6','x1','x2','x3'], plan:{
+  e11:PL('1', 3, 'plan', '1-2', 210), e4:PL('2', 3, '5-7', '1', 180),
+  e6:PL('3a', 3, '6-10', '0-1', 0, { ss:'3b' }), x1:PL('3b', 3, '12-15', '0', 120),
+  x2:PL('4a', 2, '10-15', '0', 0, { ss:'4b' }), x3:PL('4b', 3, '12-20', '0', 90) } };
+const TPL_PB = { id:'pb', name:'Push B', icon:'💥', exerciseIds:['e11','x12','e8','x13','x14','x15'], plan:{
+  e11:PL('1', 3, 'plan', '1-2, dernière série 0-1', 150), x12:PL('2', 3, '6-10', '1', 150),
+  e8:PL('3a', 4, '10-15', '0', 0, { ss:'3b' }), x13:PL('3b', 3, '8-12', '0', 60),
+  x14:PL('4a', 2, '6-12', '0-1', 0, { ss:'4b', nb:true }), x15:PL('4b', 2, '10-12', '0-1', 60, { side:true }) } };
+const TPL_PULLA = { id:'t2', name:'Pull A', icon:'🔗', exerciseIds:['e3','x4','x5','x6','x7','x8'], plan:{
+  e3:PL('1', 3, '5-7', '1', 180), x4:PL('2', 3, '6-10', '1', 150), x5:PL('3', 2, '6-10', '0', 90),
+  x6:PL('4a', 2, '12-15', '0-1', 0, { ss:'4b' }), x7:PL('4b', 2, '8-12', '0', 0, { ss:'4c' }), x8:PL('4c', 2, '8-12', '0', 60) } };
+const TPL_LEGS = { id:'t3', name:'Legs', icon:'🦵', exerciseIds:['x9','x10','x11'], plan:{
+  x9:PL('1', 3, '8-12', '0', 90), x10:PL('2', 3, '10-15', '0', 90), x11:PL('3', 3, '6-10', '1, dernière série 0', 150) } };
+const TPL_PULLB = { id:'pb2', name:'Pull B', icon:'🔗', exerciseIds:['x16','x4','x17','x6','x18'], plan:{
+  x16:PL('1', 3, '8-12', '0-1', 120), x4:PL('2', 3, '10-12', '0', 120),
+  x17:PL('3a', 2, '8-12', '0', 0, { ss:'3b' }), x6:PL('3b', 2, '12-15', '0', 60), x18:PL('4', 2, '8-12', '0', 60) } };
+const TPL_C1 = { id:'c1', name:'Course 1', icon:'⚡', kind:'run', exerciseIds:[] };
+const TPL_C2 = { id:'c2', name:'Course 2', icon:'⚡', kind:'run', exerciseIds:[] };
+const PROG_TPLS = [TPL_PA, TPL_PB, TPL_PULLA, TPL_LEGS, TPL_PULLB, TPL_C1, TPL_C2];
+// 12 niveaux de course : de 2 × 5 min à 40 min continues et un 5 km
+const RUN_LV = [null,
+  { b:'3 × (5 min de course + 1 min de marche)', m:15 }, { b:'4 × (5 min + 1 min)', m:20 }, { b:'3 × (7 min + 1 min)', m:21 },
+  { b:'2 × (10 min + 1 min)', m:20 }, { b:'2 × (12 min + 1 min)', m:24 }, { b:'20 min continues', m:20 },
+  { b:'25 min continues', m:25 }, { b:'30 min continues', m:30 }, { b:'30 min continues, puis 4 accélérations de 20 s', m:32 },
+  { b:'35 min continues, puis 4 accélérations de 20 s', m:37 }, { b:'40 min continues, puis 6 accélérations de 20 s', m:42 },
+  { b:'Test : 5 km à allure soutenue et régulière, note le temps', m:'30-38' }];
+const runBlock = (lv, sortie) => lv >= 12 ? (sortie === 2 ? RUN_LV[12] : RUN_LV[11]) : RUN_LV[Math.max(1, lv)];
+const RUN_DEFAULT = { level:1, c1:null, c2:null, pend:false, skipUsed:false, bike:0 };
+const APP_VERSION = '2026-11-07.1';
+const planDef = { n:3, r:'8-12', rir:'1', rest:90, chain:false };
+const REST_CHOICES = [0, 30, 45, 60, 90, 120, 150, 180, 210, 240, 300];
+const toFormPlan = t => {
+  const o = {};
+  (t.exerciseIds || []).forEach(id => {
+    const p = t.plan && t.plan[id];
+    o[id] = p ? { n:p.n, r:p.r, rir:p.rir || '', rest:p.ss ? (p.rest || 60) : p.rest, chain:!!p.ss, nb:p.nb, side:p.side } : { ...planDef };
+  });
+  return o;
+};
+// Numérote les postes : un enchaînement 4a / 4b / 4c forme un seul poste
+const buildPlan = (ids, fp) => {
+  const groups = [];
+  ids.forEach((id, i) => {
+    const prev = i > 0 ? fp[ids[i - 1]] : null;
+    if (prev && prev.chain) groups[groups.length - 1].push(id); else groups.push([id]);
+  });
+  const out = {};
+  groups.forEach((g, gi) => g.forEach((id, k) => {
+    const p = fp[id] || planDef;
+    const lbl = g.length > 1 ? (gi + 1) + 'abcdefgh'[k] : String(gi + 1);
+    const chained = k < g.length - 1;
+    const r = p.r === 'plan' ? 'plan' : (/^\d{1,2}(-\d{1,2})?$/.test(String(p.r || '').trim()) ? String(p.r).trim() : '8-12');
+    const restV = p.rest === undefined || p.rest === '' || p.rest === null ? 90 : Math.max(0, +p.rest || 0);
+    const e = { lbl, n: Math.min(10, Math.max(1, parseInt(p.n, 10) || 3)), r, rir: String(p.rir || ''), rest: chained ? 0 : restV };
+    if (chained) e.ss = (gi + 1) + 'abcdefgh'[k + 1];
+    if (p.nb) e.nb = true;
+    if (p.side) e.side = true;
+    out[id] = e;
+  }));
+  return out;
+};
+const fmtRest = n => n >= 60 ? Math.floor(n / 60) + ' min' + (n % 60 ? ' ' + (n % 60) : '') : n + ' s';
+// [séries, reps cibles, kg par haltère]
+const PROG_A = {1:[3,'3',50],2:[4,'3',50],3:[3,'4',50],4:[3,'5',45],5:[4,'4',50],6:[3,'5',50],7:[4,'5',50],8:[3,'5',45],9:[3,'6',50],10:[3,'7',50],11:[3,'8',50],12:[3,'6',45]};
+const PROG_B = {1:[3,'8-10','b'],2:[3,'8-10','b'],3:[3,'8-10','b'],4:[3,'10',40],5:[3,'8-10','b'],6:[3,'8-10','b'],7:[3,'8-10','b'],8:[3,'10',40],9:[3,'6',50],10:[3,'7-8',50],11:[3,'8-9',50],12:[3,'8-10',50]};
+const PROG_DEFAULT = { on:true, week:1, doneA:false, doneB:false, sw50:false, finished:false };
+const progRx = (prog, sess) => {
+  const t = (sess === 'A' ? PROG_A : PROG_B)[prog.week] || (sess === 'A' ? PROG_A : PROG_B)[12];
+  let n = t[0], r = t[1], kg = t[2];
+  if (kg === 'b') { if (prog.sw50) { kg = 50; r = '6-8'; } else kg = 45; }
+  return { n, r, kg, min: parseInt(r, 10) || 1 };
+};
+const ISO_RE = /curl|extension|elevation|élévation|ecart|écart|fly|pec deck|poulie|pushdown|kickback|face pull|oiseau|shrug|mollet|abduct|adduct/i;
+const defStep = ex => ex.step && +ex.step > 0 ? +ex.step : (ex.muscleGroup === 'Biceps' || ISO_RE.test(ex.name || '') ? 1 : 2.5);
+const warmFor = kg => kg >= 50 ? [[35, 8], [40, 5], [45, 2]] : kg >= 45 ? [[35, 8], [40, 3]] : [[35, 6]];
+const migrate = (exs, tpls) => {
+  let e = exs, t = tpls;
+  if (!e.some(x => x.id === 'e11')) e = [...e, EX_DBDECL];
+  PROG_EX.forEach(d => { if (!e.some(x => x.id === d.id)) e = [...e, d]; });
+  e = e.map(x => EX_PATCH[x.id] && !x.pv ? { ...x, ...EX_PATCH[x.id], notes: x.notes || EX_PATCH[x.id].notes || '', pv: 1 } : x);
+  const hasEx2 = id => e.some(x => x.id === id);
+  PROG_TPLS.forEach(tp => {
+    const cur = t.find(x => x.id === tp.id);
+    const full = { ...tp, exerciseIds: tp.exerciseIds.filter(hasEx2) };
+    if (!cur) t = [...t, full];
+    else if (!cur.plan && !cur.kind) t = t.map(x => x.id === tp.id ? full : x);
+  });
+  return [e, t];
+};
+
+const ICO = {
+  workout: 'M6 7v10M18 7v10M3 9v6M21 9v6M6 12h12',
+  exercises: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  progress: 'M3 17l6-6 4 4 8-8M15 7h6v6',
+  weight: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 12l4-3',
+  trophy: 'M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3',
+  flame: 'M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2 1-3.2 2-4.2 0 2 1 3 2 3 0-3-1-5 1-8.8z',
+  timer: 'M12 8v5l3 2M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM9 2h6',
+  repeat: 'M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3',
+  bars: 'M4 20V10M10 20V4M16 20v-8M22 20H2',
+  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3',
+  sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
+  moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
+  check: 'M20 6L9 17l-5-5',
+  play: 'M7 4l13 8-13 8z',
+  plus: 'M12 5v14M5 12h14',
+  ruler: 'M3 17L17 3l4 4L7 21zM8 8l2 2M11 5l2 2M5 11l2 2'
+};
+function Ico({ name, color, size = 24 }) {
+  return html`<svg viewBox="0 0 24 24" width=${size} height=${size} fill="none" stroke=${color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d=${ICO[name]} /></svg>`;
+}
+
+function Ring({ value, max, size = 84 }) {
+  const C = useC();
+  const r = (size - 12) / 2, c = 2 * Math.PI * r, p = Math.min(1, max ? value / max : 0);
+  return html`
+    <svg width=${size} height=${size} viewBox=${'0 0 ' + size + ' ' + size}>
+      <circle cx=${size / 2} cy=${size / 2} r=${r} fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="8" />
+      <circle cx=${size / 2} cy=${size / 2} r=${r} fill="none" stroke=${p >= 1 ? C.green : '#fff'} strokeWidth="8" strokeLinecap="round" strokeDasharray=${c} strokeDashoffset=${c * (1 - p)} transform=${'rotate(-90 ' + size / 2 + ' ' + size / 2 + ')'} style=${{ transition: 'stroke-dashoffset .6s' }} />
+      <text x=${size / 2} y=${size / 2 + 9} textAnchor="middle" fontSize="26" fontWeight="800" fill="#fff">${value}</text>
+    </svg>
+  `;
+}
+
+function Stepper({ value, onChange, step, list, unit, disabled, start }) {
+  const C = useC();
+  const num = parseFloat(value);
+  const cur = isNaN(num) ? null : num;
+  const bump = dir => {
+    if (disabled) return;
+    let nv;
+    if (cur === null) nv = dir > 0 ? (start || (list ? list[0] : step)) : 0;
+    else if (list) {
+      const cand = dir > 0 ? list.filter(x => x > cur + 1e-9) : list.filter(x => x < cur - 1e-9);
+      nv = cand.length ? (dir > 0 ? cand[0] : cand[cand.length - 1]) : cur;
+    } else nv = Math.max(0, +(cur + dir * step).toFixed(2));
+    onChange(String(nv));
+    if (navigator.vibrate) { try { navigator.vibrate(8); } catch {} }
+  };
+  const bt = { background: 'none', border: 'none', color: disabled ? C.border : C.accent, fontSize: 22, fontWeight: 700, width: 34, height: 46, cursor: 'pointer', flexShrink: 0 };
+  return html`
+    <div style=${{ display: 'flex', alignItems: 'center', background: C.card2, border: '1px solid ' + C.border, borderRadius: 14, overflow: 'hidden' }}>
+      <button onClick=${() => bump(-1)} style=${bt}>−</button>
+      <div style=${{ flex: 1, minWidth: 0, textAlign: 'center', lineHeight: 1.1 }}>
+        <input type="number" inputMode="decimal" value=${value} placeholder="—" disabled=${disabled} onInput=${e => onChange(e.target.value)} style=${{ width: '100%', background: 'none', border: 'none', color: C.text, textAlign: 'center', fontFamily: FD, fontSize: 28, fontWeight: 800, padding: '3px 0 0', margin: 0, boxSizing: 'border-box', minWidth: 0, outline: 'none' }} />
+        <div style=${{ fontSize: 9, color: C.muted, paddingBottom: 4, whiteSpace: 'nowrap' }}>${unit}</div>
+      </div>
+      <button onClick=${() => bump(1)} style=${bt}>+</button>
+    </div>
+  `;
+}
+
+const compressImg = file => new Promise(res => {
+  const r = new FileReader();
+  r.onload = ev => {
+    const orig = ev.target.result;
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const M = 900, k = Math.min(1, M / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        res(c.toDataURL('image/jpeg', 0.72));
+      } catch { res(orig); }
+    };
+    img.onerror = () => res(orig);
+    img.src = orig;
+  };
+  r.onerror = () => res(null);
+  r.readAsDataURL(file);
+});
+
+// ─── shared components ───────────────────────────────────────
+function BackBar({ title, onBack, right }) {
+  const C = useC();
+  return html`
+    <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
+      <button onClick=${onBack} style=${{ background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:28, padding:0, lineHeight:1 }}>‹</button>
+      <h2 style=${{ margin:0, fontFamily:FD, fontSize:26, fontWeight:800, flex:1, color:C.text }}>${title}</h2>
+      ${right || null}
+    </div>
+  `;
+}
+
+function ConfirmDel({ onConfirm, label }) {
+  const C = useC();
+  const [c, setC] = useState(false);
+  if (c) return html`
+    <div style=${{ display:'flex', gap:8, alignItems:'center' }}>
+      <span style=${{ fontSize:12, color:C.muted }}>Confirmer ?</span>
+      <button onClick=${onConfirm} style=${{ background:C.red, border:'none', borderRadius:8, padding:'5px 12px', color:'#fff', cursor:'pointer', fontSize:13, fontWeight:700 }}>Oui</button>
+      <button onClick=${() => setC(false)} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:8, padding:'5px 12px', color:C.muted, cursor:'pointer', fontSize:13 }}>Non</button>
+    </div>
+  `;
+  return html`<button onClick=${() => setC(true)} style=${{ background:'none', border:'none', color:C.red, cursor:'pointer', fontSize:13, fontWeight:600 }}>${label || 'Supprimer'}</button>`;
+}
+
+function PhotoThumb({ id }) {
+  const C = useC();
+  const [src, setSrc] = useState(null);
+  useEffect(() => { DB.get('rm:ph:' + id, null).then(setSrc); }, [id]);
+  if (src) return html`<img src=${src} style=${{ width:44, height:44, borderRadius:8, objectFit:'cover', flexShrink:0 }} alt="" />`;
+  return html`<div style=${{ width:44, height:44, borderRadius:8, background:C.card2, flexShrink:0 }}></div>`;
+}
+
+function RestTimer({ onDone, ds }) {
+  const C = useC();
+  const secs0 = ds || 90;
+  const [secs, setSecs] = useState(secs0);
+  const [paused, setPaused] = useState(false);
+  const fired = useRef(false);
+  useEffect(() => {
+    if (paused) return;
+    if (secs <= 0) { if (!fired.current) { fired.current = true; beep(); setTimeout(onDone, 400); } return; }
+    const t = setTimeout(() => setSecs(s => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [secs, paused]);
+  const m = Math.floor(secs / 60), s = secs % 60;
+  const pct = Math.max(0, (secs0 - secs) / secs0 * 100);
+  const col = secs <= 10 ? C.red : C.accent;
+  return html`
+    <div style=${{ position:'fixed', bottom:73, left:'50%', transform:'translateX(-50%)', width:'calc(100% - 32px)', maxWidth:448, background:C.surface, border:'1px solid ' + col + '88', borderRadius:16, padding:'10px 14px', display:'flex', alignItems:'center', gap:12, zIndex:200, boxShadow:'0 12px 40px rgba(0,0,0,.55)', backdropFilter:'blur(14px)', WebkitBackdropFilter:'blur(14px)' }}>
+      <div style=${{ position:'absolute', bottom:0, left:0, right:0, height:3, borderRadius:'0 0 16px 16px', background:C.card2, overflow:'hidden' }}>
+        <div style=${{ height:'100%', background:col, width:pct+'%', transition:'width 1s linear' }}></div>
+      </div>
+      <div style=${{ fontWeight:800, fontSize:44, color:col, minWidth:92, fontFamily:FD }}>${m}:${s < 10 ? '0' + s : s}</div>
+      <div style=${{ flex:1 }}>
+        <div style=${{ fontSize:11, color:C.muted, marginBottom:5 }}>Temps de repos</div>
+        <div style=${{ display:'flex', gap:6 }}>
+          <button onClick=${() => setSecs(s => Math.max(0, s - 15))} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:8, padding:'4px 10px', color:C.text, cursor:'pointer', fontSize:12 }}>-15s</button>
+          <button onClick=${() => setSecs(s => s + 15)} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:8, padding:'4px 10px', color:C.text, cursor:'pointer', fontSize:12 }}>+15s</button>
+          <button onClick=${() => setPaused(p => !p)} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:8, padding:'4px 10px', color:C.text, cursor:'pointer', fontSize:14 }}>${paused ? '▶' : '⏸'}</button>
+        </div>
+      </div>
+      <button onClick=${onDone} style=${{ background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:22, padding:4 }}>✕</button>
+    </div>
+  `;
+}
+
+function ExTimer() {
+  const C = useC();
+  const [running, setRunning] = useState(false);
+  const [secs, setSecs] = useState(0);
+  const iv = useRef(null);
+  const toggle = () => {
+    if (running) { clearInterval(iv.current); setRunning(false); }
+    else { iv.current = setInterval(() => setSecs(s => s + 1), 1000); setRunning(true); }
+  };
+  const reset = () => { clearInterval(iv.current); setRunning(false); setSecs(0); };
+  useEffect(() => () => clearInterval(iv.current), []);
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return html`
+    <div style=${{ display:'flex', alignItems:'center', gap:6 }}>
+      <button onClick=${toggle} style=${{ background:running ? C.aGlow : C.card2, border:'1px solid '+(running ? C.accent : C.border), borderRadius:8, padding:'4px 10px', color:running ? C.accent : C.muted, cursor:'pointer', fontSize:12, fontWeight:600, display:'flex', alignItems:'center', gap:5 }}>
+        ${running ? '⏸' : '⏱'}
+        ${secs > 0 ? ' ' + m + ':' + (s < 10 ? '0' + s : s) : (!running ? ' Chrono' : null)}
+      </button>
+      ${secs > 0 && !running ? html`<button onClick=${reset} style=${{ background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:12 }}>✕</button>` : null}
+    </div>
+  `;
+}
+
+// Simple SVG line chart
+function SvgLine({ data, color, h = 130 }) {
+  const C = useC();
+  if (!data || data.length < 2) return null;
+  const vals = data.map(d => d.v);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = (max - min) || 1;
+  const W = 300, H = h - 30;
+  const pts = data.map((d, i) => {
+    const x = 10 + (i / (data.length - 1)) * (W - 20);
+    const y = 10 + (1 - (d.v - min) / range) * (H - 20);
+    return x + ',' + y;
+  }).join(' ');
+  return html`
+    <div style=${{ width:'100%', overflowX:'hidden' }}>
+      <svg viewBox=${'0 0 ' + W + ' ' + H} style=${{ width:'100%', height:h+'px' }}>
+        <polyline points=${pts} fill="none" stroke=${color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+        ${data.map((d, i) => {
+          const x = 10 + (i / (data.length - 1)) * (W - 20);
+          const y = 10 + (1 - (d.v - min) / range) * (H - 20);
+          return html`<circle key=${i} cx=${x} cy=${y} r="3" fill=${color} />`;
+        })}
+        ${data.map((d, i) => {
+          const x = 10 + (i / (data.length - 1)) * (W - 20);
+          return html`<text key=${i} x=${x} y=${H - 2} textAnchor="middle" fontSize="9" fill=${C.muted}>${d.d}</text>`;
+        })}
+      </svg>
+    </div>
+  `;
+}
+
+// ─── ROOT ────────────────────────────────────────────────────
+function RepMemo() {
+  const [mode, setMode] = useState('dark');
+  const C = mode === 'dark' ? DARK : LIGHT;
+  const [tab, setTab] = useState('workout');
+  const [exs, setExs] = useState([]);
+  const [wos, setWos] = useState([]);
+  const [tpls, setTpls] = useState([]);
+  const [wts, setWts] = useState([]);
+  const [msrs, setMsrs] = useState([]);
+  const [aWo, setAWo] = useState(null);
+  const [rt, setRt] = useState(90);
+  const [prog, setProg] = useState(PROG_DEFAULT);
+  const [goal, setGoal] = useState(4);
+  const [run, setRun] = useState(RUN_DEFAULT);
+  const [opts, setOpts] = useState({ stag: true });
+  const [saveErr, setSaveErr] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      DB.get('rm:ex', SEED_EX), DB.get('rm:wo', []), DB.get('rm:tpl', SEED_TPL),
+      DB.get('rm:wt', []), DB.get('rm:msrs', []), DB.get('rm:mode', 'dark'), DB.get('rm:rt', 90),
+      DB.get('rm:active', null), DB.get('rm:prog', PROG_DEFAULT), DB.get('rm:goal', 4), DB.get('rm:run', RUN_DEFAULT), DB.get('rm:opts', { stag: true })
+    ]).then(([a, b, c, d, e, m, r, act, pg, gl, rn, op]) => {
+      const [a2, c2] = migrate(a, c);
+      setExs(a2); setWos(b); setTpls(c2); setWts(d); setMsrs(e); setMode(m); setRt(r); setProg(pg); setGoal(gl); setRun({ ...RUN_DEFAULT, ...rn }); setOpts({ stag: true, ...op });
+      // Séance en cours : restaurée telle quelle après un passage en arrière-plan
+      if (act && act.exercises && act.startedAt) setAWo(act);
+      setReady(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    const h = () => setSaveErr(true);
+    window.addEventListener('rm-save-error', h);
+    return () => window.removeEventListener('rm-save-error', h);
+  }, []);
+
+  // Sauvegarde immédiate de la séance en cours à chaque modification
+  useEffect(() => { if (ready) DB.set('rm:active', aWo); }, [aWo, ready]);
+
+  // Filet de sécurité : écriture synchrone au moment où l'app passe en arrière-plan
+  const aWoRef = useRef(null);
+  aWoRef.current = aWo;
+  const readyRef = useRef(false);
+  readyRef.current = ready;
+  useEffect(() => {
+    const flush = () => {
+      if (!readyRef.current || window.__noFlush) return;
+      try { localStorage.setItem('rm:active', JSON.stringify(aWoRef.current)); } catch {}
+    };
+    const onVis = () => { if (document.visibilityState === 'hidden') flush(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('pagehide', flush);
+    return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('pagehide', flush); };
+  }, []);
+
+  useEffect(() => { if (ready) DB.set('rm:ex', exs); }, [exs, ready]);
+  useEffect(() => { if (ready) DB.set('rm:wo', wos); }, [wos, ready]);
+  useEffect(() => { if (ready) DB.set('rm:tpl', tpls); }, [tpls, ready]);
+  useEffect(() => { if (ready) DB.set('rm:wt', wts); }, [wts, ready]);
+  useEffect(() => { if (ready) DB.set('rm:msrs', msrs); }, [msrs, ready]);
+  useEffect(() => { if (ready) DB.set('rm:mode', mode); }, [mode, ready]);
+  useEffect(() => { if (ready) DB.set('rm:rt', rt); }, [rt, ready]);
+  useEffect(() => { if (ready) DB.set('rm:prog', prog); }, [prog, ready]);
+  useEffect(() => { if (ready) DB.set('rm:goal', goal); }, [goal, ready]);
+  useEffect(() => { if (ready) DB.set('rm:run', run); }, [run, ready]);
+  useEffect(() => { if (ready) DB.set('rm:opts', opts); }, [opts, ready]);
+
+  const lastPerf = exId => {
+    const hs = [...wos].filter(w => w.exercises.some(e => e.exerciseId === exId)).sort((a, b) => new Date(b.date) - new Date(a.date));
+    if (!hs.length) return [];
+    const ex = hs[0].exercises.find(e => e.exerciseId === exId);
+    return ex ? ex.sets : [];
+  };
+
+  const bestWeight = exId => {
+    let best = 0;
+    wos.forEach(w => {
+      const ex = w.exercises.find(e => e.exerciseId === exId);
+      if (ex) ex.sets.forEach(s => { if (+s.weight > best) best = +s.weight; });
+    });
+    return best;
+  };
+
+  if (!ready) return html`
+    <div style=${{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100vh', gap:10 }}>
+      <div style=${{ fontFamily:FD, fontSize:36, fontWeight:800, color:'#7b6ef6' }}>RepMemo</div>
+      <div style=${{ color:'#7070a0', fontSize:14 }}>Chargement...</div>
+    </div>
+  `;
+
+  const toggleMode = () => setMode(m => m === 'dark' ? 'light' : 'dark');
+  const ctx = { exs, setExs, wos, setWos, tpls, setTpls, wts, setWts, msrs, setMsrs, aWo, setAWo, lastPerf, bestWeight, mode, toggleMode, rt, setRt, prog, setProg, goal, setGoal, run, setRun, opts, setOpts };
+  const tabs = [['workout', 'workout', 'Séance'], ['exercises', 'exercises', 'Exercices'], ['progress', 'progress', 'Progression'], ['weight', 'weight', 'Poids']];
+
+  return html`
+    <${ThemeCtx.Provider} value=${C}>
+      <div style=${{ backgroundColor:C.bg, backgroundImage:C.bgImg, backgroundRepeat:'no-repeat', minHeight:'100vh', maxWidth:480, margin:'0 auto', fontFamily:"-apple-system, 'Helvetica Neue', sans-serif", color:C.text, paddingTop:'env(safe-area-inset-top)' }}>
+        <style dangerouslySetInnerHTML=${{ __html: 'input:focus,textarea:focus,select:focus{outline:2px solid ' + C.accent + '!important}' }}></style>
+        ${saveErr ? html`
+          <div onClick=${() => setSaveErr(false)} style=${{ position:'fixed', top:0, left:'50%', transform:'translateX(-50%)', width:'100%', maxWidth:480, zIndex:400, background:C.red, color:'#fff', padding:'10px 14px', fontSize:13, fontWeight:700, cursor:'pointer' }}>⚠ Le stockage est plein ou refusé : tes dernières données ne sont pas enregistrées. Exporte une sauvegarde (Séance, bouton Sauvegarde) et supprime des photos. Toucher pour masquer.</div>
+        ` : null}
+        <div style=${{ paddingBottom:'calc(78px + env(safe-area-inset-bottom))', minHeight:'100vh' }}>
+          ${tab === 'workout'   ? html`<${WorkoutTab}   ...${ctx} />` : null}
+          ${tab === 'exercises' ? html`<${ExercisesTab} ...${ctx} />` : null}
+          ${tab === 'progress'  ? html`<${ProgressTab}  ...${ctx} />` : null}
+          ${tab === 'weight'    ? html`<${WeightTab}    ...${ctx} />` : null}
+        </div>
+        <nav style=${{ position:'fixed', bottom:0, left:'50%', transform:'translateX(-50%)', width:'100%', maxWidth:480, background:C.surface, backdropFilter:'blur(16px)', WebkitBackdropFilter:'blur(16px)', borderTop:'1px solid '+C.border, display:'flex', zIndex:100, paddingBottom:'env(safe-area-inset-bottom)' }}>
+          ${tabs.map(([id, ico, lbl]) => html`
+            <button key=${id} onClick=${() => setTab(id)} style=${{ flex:1, padding:'10px 0 12px', background:'none', border:'none', cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:3, color:tab === id ? C.accent : C.muted, position:'relative' }}>
+              <span style=${{ position:'absolute', top:0, width:30, height:3, borderRadius:'0 0 4px 4px', background:tab === id ? C.grad : 'transparent' }}></span>
+              <${Ico} name=${ico} color=${tab === id ? C.accent : C.muted} />
+              <span style=${{ fontSize:10, fontWeight:tab === id ? 700 : 400 }}>${lbl}</span>
+            </button>
+          `)}
+        </nav>
+      </div>
+    <//>
+  `;
+}
+
+// ─── WORKOUT ─────────────────────────────────────────────────
+function WorkoutTab({ exs, wos, setWos, tpls, setTpls, aWo, setAWo, lastPerf, bestWeight, mode, toggleMode, rt, setRt, prog, setProg, goal, setGoal, run, setRun, opts, setOpts }) {
+  const C = useC();
+  const [view, setView] = useState(() => aWo ? 'active' : 'home');
+  const [summary, setSummary] = useState(null);
+  const [selWo, setSelWo] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [showRest, setShowRest] = useState(false);
+  const [search, setSearch] = useState('');
+  const [tplForm, setTplForm] = useState({ name: '', icon: '💪', exerciseIds: [], plan: {} });
+  const [editTpl, setEditTpl] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [lastExp, setLastExp] = useState(null);
+  const [dataMsg, setDataMsg] = useState(null);
+  const [pendingImp, setPendingImp] = useState(null);
+  useEffect(() => { DB.get('rm:lastExport', null).then(setLastExp); }, []);
+  const [persisted, setPersisted] = useState(null);
+  useEffect(() => {
+    try {
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persisted().then(p => p ? true : navigator.storage.persist()).then(setPersisted).catch(() => setPersisted(false));
+      } else setPersisted(false);
+    } catch (e) { setPersisted(false); }
+  }, []);
+  const standalone = (() => { try { return !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || !!navigator.standalone; } catch (e) { return false; } })();
+  const [restKey, setRestKey] = useState(0);
+  const [restSecs, setRestSecs] = useState(90);
+  const recAnn = useRef({});
+  const t0 = useRef(null);
+
+  // Écran gardé allumé pendant la séance
+  useEffect(() => {
+    if (view !== 'active' || !('wakeLock' in navigator)) return;
+    let lock = null, off = false;
+    const get = async () => { try { lock = await navigator.wakeLock.request('screen'); } catch {} };
+    get();
+    const vis = () => { if (document.visibilityState === 'visible' && !off) get(); };
+    document.addEventListener('visibilitychange', vis);
+    return () => { off = true; document.removeEventListener('visibilitychange', vis); try { lock && lock.release(); } catch {} };
+  }, [view]);
+
+  useEffect(() => { if (aWo && view === 'home') setView('active'); }, [aWo]);
+
+  // L'heure de départ vit dans la séance sauvegardée : la durée reste juste après un retour dans l'app
+  const startedAt = aWo ? aWo.startedAt : null;
+  useEffect(() => {
+    if (startedAt) { t0.current = startedAt; setElapsed(Math.round((Date.now() - startedAt) / 60000)); }
+  }, [startedAt]);
+
+  useEffect(() => {
+    if (view !== 'active') return;
+    const tick = () => { if (t0.current) setElapsed(Math.round((Date.now() - t0.current) / 60000)); };
+    const iv = setInterval(tick, 10000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', tick); };
+  }, [view]);
+
+  // Historique d'un exercice (séances hors décharge), de la plus récente à la plus ancienne, de préférence dans le même modèle
+  const topW = sets => sets.reduce((m, x) => +x.weight > m ? +x.weight : m, 0);
+  const avgR = sets => sets.length ? sets.reduce((q, x) => q + (+x.reps || 0), 0) / sets.length : 0;
+  const better = (older, newer) => { const a1 = topW(older), b1 = topW(newer); return b1 > a1 || (b1 === a1 && avgR(newer) > avgR(older) + 1e-9); };
+  const histFor = (exId, tplId) => {
+    const all = [...wos].filter(w => !w.deload && w.kind !== 'run').sort((x, y) => new Date(y.date) - new Date(x.date));
+    const pick = f => all.filter(f).map(w => w.exercises.find(e => e.exerciseId === exId)).filter(Boolean);
+    const own = tplId ? pick(w => w.tplId === tplId) : [];
+    return own.length ? own : pick(() => true);
+  };
+
+  const mkEx = (exId, rx, plan, o) => {
+    o = o || {};
+    const ex = exs.find(e => e.id === exId);
+    const meta = plan ? { lbl: plan.lbl, rir: o.deload && !rx ? '3' : plan.rir, rest: plan.rest, ss: plan.ss || null, rng: plan.r !== 'plan' ? plan.r : null, side: !!plan.side, nPlan: plan.n } : {};
+    const base = { id: uid(), exerciseId: exId, exerciseName: ex ? ex.name : '?', bw: !!(ex && ex.bw), unit: ex && ex.unit ? ex.unit : null, ...meta };
+    if (rx) {
+      const work = Array.from({ length: rx.n }, () => ({ id: uid(), weight: rx.kg, reps: '', tgt: rx.r, completed: false, note: '' }));
+      return { ...base, bilateral: false, perDb: true, rx, sets: work };
+    }
+    const stp = ex ? defStep(ex) : 2.5;
+    const stepUp = w => ex && ex.perDb ? ((DB_WEIGHTS.filter(x => x > +w)[0]) || +w) : +(+w + stp).toFixed(2);
+    // Séance programmée : plan du modèle (séries, fourchette de reps, repos)
+    if (plan && plan.r !== 'plan') {
+      const h = histFor(exId, o.tplId);
+      const lp = h[0] ? h[0].sets : [];
+      const rTop = parseInt(String(plan.r).split('-').pop(), 10) || 12;
+      let n = plan.n, flag = null, flagInfo = null, wf = w => +w;
+      const bump = !o.deload && !plan.nb && lp.length >= plan.n && lp.every(x => +x.reps >= rTop);
+      if (bump) wf = stepUp;
+      else if (!o.deload && o.stag !== false && h.length >= 2) {
+        const stuck = !better(h[1].sets, h[0].sets);
+        const sum = h.slice(0, 3).map(x => topW(x.sets) + ' kg × ' + (Math.round(avgR(x.sets) * 10) / 10)).join(' / ');
+        if (stuck && h[0].extra) { wf = w => Math.max(0, +(Math.round(+w * 0.9 / stp) * stp).toFixed(2)); flag = 'drop'; flagInfo = sum; }
+        else if (stuck && !h[0].extra && h.length >= 3 && !better(h[2].sets, h[1].sets)) { n = plan.n + 1; flag = 'plus'; flagInfo = sum; }
+      }
+      if (o.deload) n = Math.max(1, plan.n - 1);
+      const sets = Array.from({ length: n }, (_, i) => {
+        const src = lp[i] || lp[lp.length - 1];
+        return { id: uid(), weight: src ? wf(src.weight) : 0, reps: src && lp[i] && !bump && flag !== 'drop' ? String(lp[i].reps) : '', tgt: plan.r, completed: false, note: '' };
+      });
+      const tw = topW(lp);
+      return { ...base, bilateral: ex ? !!ex.bilateral : false, perDb: ex ? !!ex.perDb : false, step: stp, flag, flagInfo, extra: flag === 'plus',
+        up: bump && stepUp(tw) !== tw ? { from: tw, to: stepUp(tw), sets: lp.length, reps: rTop } : null,
+        last: lp.map(x => ({ weight: x.weight, reps: x.reps })), sets };
+    }
+    // Séance libre : montée de charge automatique sur le plafond de reps de l'exercice
+    const lp = lastPerf(exId);
+    const dw = lp[0] ? lp[0].weight : 0;
+    const rm = ex && ex.repMax !== undefined && ex.repMax !== '' ? +ex.repMax : 12;
+    const bump = rm > 0 && lp.length >= 3 && lp.every(x => +x.reps >= rm);
+    const up = w => bump ? stepUp(w) : +w;
+    const tw = lp.reduce((m, x) => +x.weight > m ? +x.weight : m, 0);
+    const upInfo = bump && up(tw) !== tw ? { from: tw, to: up(tw), sets: lp.length, reps: rm } : null;
+    return {
+      ...base, bilateral: ex ? !!ex.bilateral : false, perDb: ex ? !!ex.perDb : false,
+      up: upInfo, step: stp,
+      sets: Array.from({ length: Math.max(lp.length || 0, 3) }, (_, i) => ({
+        id: uid(), weight: lp[i] ? up(lp[i].weight) : up(dw), reps: lp[i] && !bump ? String(lp[i].reps) : '', tgt: bump ? '< ' + rm : undefined, completed: false, note: ''
+      }))
+    };
+  };
+
+  const startRun = tpl => {
+    if (run.pend) { setView('home'); return; }
+    t0.current = Date.now(); setElapsed(0);
+    setAWo({ id: uid(), name: tpl.name, tplId: tpl.id, kind: 'run', date: nowISO(), startedAt: Date.now(), notes: '',
+      level: Math.min(12, Math.max(1, run.level)), sortie: tpl.id === 'c1' ? 1 : 2, bike: run.bike > 0,
+      run: { min: '', km: '', talk: null, pain: false }, exercises: [] });
+    setView('active');
+  };
+
+  const updRun = (f, v) => setAWo(p => ({ ...p, run: { ...p.run, [f]: v } }));
+  const pace = (min, km) => (+km > 0 && +min > 0) ? (Math.floor(+min / +km) + ':' + String(Math.round((+min / +km % 1) * 60) % 60).padStart(2, '0') + ' /km') : null;
+
+  const finishRun = () => {
+    const st = aWo.startedAt || t0.current;
+    const r = aWo.run;
+    const dur = +r.min > 0 ? +r.min : Math.round((Date.now() - st) / 60000);
+    const km = +r.km > 0 ? +r.km : 0;
+    const talk = r.talk !== false;
+    const lv = aWo.level;
+    const done = { ...aWo, date: nowISO(), duration: dur, isCompleted: true, run: { ...r, min: dur, km: km || '', talk } };
+    let nr = { ...run }, msg;
+    if (aWo.bike) {
+      nr.bike = Math.max(0, (run.bike || 0) - 1);
+      msg = nr.bike > 0 ? 'Vélo fait. Encore ' + nr.bike + ' sortie de vélo avant de reprendre la course au niveau ' + lv + '.' : 'Vélo fait. La prochaine course reprend au niveau ' + lv + '.';
+    } else if (r.pain) {
+      nr = { ...run, c1: null, c2: null, bike: 2, level: Math.max(1, lv - 1) };
+      msg = 'Douleur pendant la sortie : les 2 prochaines sorties sont remplacées par 30 min de vélo, puis tu reprends au niveau ' + nr.level + '.';
+    } else if (aWo.sortie === 1) {
+      nr.c1 = { talk, min: dur, km };
+      msg = 'Course 1 du niveau ' + lv + ' enregistrée' + (talk ? '' : ' (allure de conversation non tenue)') + '. Course 2 au moins 48 h après.';
+    } else {
+      const ok = !!(run.c1 && run.c1.talk && talk);
+      nr.c2 = { talk, min: dur, km };
+      if (lv >= 12) {
+        msg = 'Test du niveau 12 terminé' + (km >= 5 ? ' : ' + km + ' km en ' + dur + ' min.' : '. Note ton temps sur 5 km.');
+        nr.c1 = null; nr.c2 = null;
+      } else if (ok) {
+        nr.pend = true;
+        msg = 'Niveau ' + lv + ' : 2 sorties tenues à allure de conversation. Sur l\'accueil, confirme que rien ne fait mal 48 h après pour passer au niveau ' + (lv + 1) + '.';
+      } else {
+        msg = (!run.c1 ? 'Course 1 manquante' : 'Allure de conversation non tenue') + ' : tu refais le niveau ' + lv + ' à la prochaine rotation.';
+        nr.c1 = null; nr.c2 = null;
+      }
+    }
+    setRun(nr);
+    setWos(prev => [...prev, done]); setAWo(null); setShowRest(false);
+    setSummary({ name: done.name, dur, exCnt: 0, ts: 0, tv: 0, recs: [], progMsg: msg, cmp: null,
+      tiles: [['timer', 'Durée', dur + ' min'], ['flame', 'Niveau', aWo.bike ? 'Vélo' : lv], ['ruler', 'Distance', km ? km + ' km' : '—'], ['bars', 'Allure', pace(dur, km) || '—']] });
+    setView('summary');
+  };
+
+  const resolveRun = how => setRun(r => {
+    const base = { ...r, c1: null, c2: null, pend: false };
+    if (how === 'up') return { ...base, level: Math.min(12, r.level + 1) };
+    if (how === 'skip') return { ...base, level: Math.min(12, r.level + 2), skipUsed: true };
+    if (how === 'pain') return { ...base, level: Math.max(1, r.level - 1), bike: 2 };
+    return base;
+  });
+
+  const startWo = (name, ids, tplId) => {
+    const tpl = tpls.find(t => t.id === tplId);
+    if (tpl && tpl.kind === 'run') return startRun(tpl);
+    const plan = tpl && tpl.plan ? tpl.plan : null;
+    const deload = !!(plan && prog.on && !prog.finished && (prog.week === 4 || prog.week === 8));
+    t0.current = Date.now(); setElapsed(0);
+    recAnn.current = {};
+    let sess = null;
+    if (prog.on && tplId === 'pa') sess = 'A';
+    if (prog.on && tplId === 'pb') sess = 'B';
+    const rx = sess ? progRx(prog, sess) : null;
+    setAWo({
+      id: uid(), name, tplId: tplId || null, date: nowISO(), startedAt: Date.now(), notes: '',
+      progSess: sess, progWeek: sess ? prog.week : null, rest: rx ? (sess === 'A' ? 210 : 150) : null, deload,
+      exercises: (ids || []).map(id => mkEx(id, rx && id === 'e11' ? rx : null, plan ? plan[id] : null, { tplId, deload, stag: opts.stag !== false }))
+    });
+    setView('active');
+  };
+
+  const addEx = exId => { setAWo(p => ({ ...p, exercises: [...p.exercises, mkEx(exId)] })); setShowAdd(false); };
+
+  const updSet = (ei, si, f, v) => setAWo(p => ({
+    ...p,
+    exercises: p.exercises.map((ex, i) => i !== ei ? ex : {
+      ...ex, sets: ex.sets.map((s, j) => j !== si ? s : { ...s, [f]: v })
+    })
+  }));
+
+  const togSet = (ei, si) => {
+    const wex = aWo.exercises[ei], st = wex.sets[si];
+    const nowDone = !st.completed;
+    if (nowDone) {
+      if (navigator.vibrate) { try { navigator.vibrate(25); } catch {} }
+      if (!st.warm) {
+        const secs = wex.rest !== undefined && wex.rest !== null ? wex.rest : (aWo.rest || rt);
+        if (secs > 0) { setRestSecs(secs); setShowRest(true); setRestKey(k => k + 1); }
+        const pb = bestWeight(wex.exerciseId);
+        if (pb > 0 && +st.weight > pb && !recAnn.current[wex.exerciseId]) {
+          recAnn.current[wex.exerciseId] = true;
+          setToast('Nouveau record : ' + wex.exerciseName + ' ' + st.weight + ' kg');
+          setTimeout(() => setToast(null), 3500);
+        }
+      }
+    }
+    setAWo(p => ({
+      ...p,
+      exercises: p.exercises.map((ex, i) => i !== ei ? ex : {
+        ...ex, sets: ex.sets.map((s, j) => j !== si ? s : { ...s, completed: !s.completed })
+      })
+    }));
+  };
+
+  const delSet = (ei, si) => setAWo(p => ({
+    ...p,
+    exercises: p.exercises.map((ex, i) => i !== ei ? ex : { ...ex, sets: ex.sets.filter((_, j) => j !== si) })
+  }));
+
+  const addSet = ei => setAWo(p => {
+    const es = [...p.exercises];
+    const last = es[ei].sets[es[ei].sets.length - 1];
+    es[ei] = { ...es[ei], sets: [...es[ei].sets, { id: uid(), weight: last ? last.weight : 0, reps: '', completed: false, note: '' }] };
+    return { ...p, exercises: es };
+  });
+
+  const delEx = ei => setAWo(p => ({ ...p, exercises: p.exercises.filter((_, i) => i !== ei) }));
+
+  const moveEx = (ei, dir) => setAWo(p => {
+    const es = [...p.exercises];
+    const ni = ei + dir;
+    if (ni < 0 || ni >= es.length) return p;
+    [es[ei], es[ni]] = [es[ni], es[ei]];
+    return { ...p, exercises: es };
+  });
+
+  const finish = () => {
+    const st = aWo.startedAt || t0.current;
+    const dur = st ? Math.round((Date.now() - st) / 60000) : 0;
+    const recs = [];
+    const recMap = {};
+    const done = {
+      ...aWo, date: nowISO(), duration: dur, isCompleted: true,
+      exercises: aWo.exercises.map(ex => {
+        const pb = bestWeight(ex.exerciseId);
+        const sets = ex.sets.filter(s => !s.warm && (+s.weight > 0 || ex.bw) && +s.reps > 0);
+        sets.forEach(s => { if (pb > 0 && +s.weight > pb && +s.weight > (recMap[ex.exerciseName] || 0)) recMap[ex.exerciseName] = +s.weight; });
+        return { ...ex, sets };
+      }).filter(ex => ex.sets.length > 0)
+    };
+    let ts = 0, tv = 0;
+    done.exercises.forEach(ex => ex.sets.forEach(s => { ts++; tv += (+s.weight || 0) * (+s.reps || 0); }));
+    Object.entries(recMap).forEach(([n, wt]) => recs.push(n + ' : ' + wt + ' kg'));
+    let cmp = null;
+    const prevs = wos.filter(w => done.tplId ? w.tplId === done.tplId : w.name === done.name).sort((a, b) => new Date(b.date) - new Date(a.date));
+    if (prevs.length) {
+      const pv = prevs[0].exercises.reduce((a, ex) => a + ex.sets.reduce((b, st) => b + (+st.weight || 0) * (+st.reps || 0), 0), 0);
+      if (pv > 0) cmp = { pct: Math.round((tv - pv) / pv * 100), date: prevs[0].date };
+    }
+    // Programme force : validation de la séance, bascule à 50 kg, passage de semaine
+    let progMsg = null;
+    if (aWo.progSess && prog.on) {
+      const src = aWo.exercises.find(e => e.exerciseId === 'e11');
+      const rx = src && src.rx;
+      const dn = done.exercises.find(e => e.exerciseId === 'e11');
+      if (rx && dn) {
+        const met = dn.sets.length >= rx.n && dn.sets.every(s => +s.reps >= rx.min);
+        let np = { ...prog };
+        if (met) np[aWo.progSess === 'A' ? 'doneA' : 'doneB'] = true;
+        if (aWo.progSess === 'B' && met && rx.kg === 45 && dn.sets.every(s => +s.reps >= 10)) {
+          np.sw50 = true;
+          progMsg = 'Tu as fait 10 reps partout à 45 kg : le prochain Push B passe à 50 kg.';
+        }
+        if (np.doneA && np.doneB) {
+          if (prog.week >= 12) { np.finished = true; progMsg = 'Semaine 12 terminée : cycle complété.'; }
+          else { np.week = prog.week + 1; np.doneA = false; np.doneB = false; progMsg = (progMsg ? progMsg + ' ' : '') + 'Semaine ' + prog.week + ' validée. Prochaine : semaine ' + np.week + '.'; }
+        } else if (!progMsg) {
+          progMsg = met ? 'Séance validée pour la semaine ' + prog.week + '.' : 'Même charge la prochaine fois sur cette séance.';
+        }
+        setProg(np);
+      }
+    }
+    setWos(prev => [...prev, done]); setAWo(null); setShowRest(false);
+    setSummary({ name: done.name, dur, exCnt: done.exercises.length, ts, tv: Math.round(tv), recs, progMsg, cmp });
+    setView('summary');
+  };
+
+  const saveTpl = () => {
+    if (!tplForm.name.trim() || !tplForm.exerciseIds.length) return;
+    const body = { name: tplForm.name.trim(), icon: tplForm.icon, exerciseIds: tplForm.exerciseIds, plan: buildPlan(tplForm.exerciseIds, tplForm.plan || {}) };
+    if (editTpl) setTpls(p => p.map(t => t.id === editTpl ? { ...t, ...body } : t));
+    else setTpls(p => [...p, { id: uid(), ...body }]);
+    setTplForm({ name: '', icon: '💪', exerciseIds: [], plan: {} }); setEditTpl(null); setView('pick');
+  };
+
+  const delTpl = id => setTpls(p => p.filter(t => t.id !== id));
+  const togTplEx = exId => setTplForm(f => {
+    const plan = { ...(f.plan || {}) };
+    if (f.exerciseIds.includes(exId)) { delete plan[exId]; return { ...f, plan, exerciseIds: f.exerciseIds.filter(i => i !== exId) }; }
+    plan[exId] = exId === 'e11' ? { n:3, r:'plan', rir:'1-2', rest:180, chain:false } : { ...planDef };
+    return { ...f, plan, exerciseIds: [...f.exerciseIds, exId] };
+  });
+  const moveTplEx = (i, dir) => setTplForm(f => {
+    const ids = [...f.exerciseIds], j = i + dir;
+    if (j < 0 || j >= ids.length) return f;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    return { ...f, exerciseIds: ids };
+  });
+  const updPlanF = (id, patch) => setTplForm(f => ({ ...f, plan: { ...(f.plan || {}), [id]: { ...((f.plan && f.plan[id]) || planDef), ...patch } } }));
+
+  const doExport = async () => {
+    const data = {};
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.indexOf('rm:') === 0) data[k] = localStorage.getItem(k); }
+    const payload = JSON.stringify({ app: 'repmemo', v: 2, exportedAt: nowISO(), data });
+    const name = 'repmemo-' + today() + '.json';
+    try {
+      const file = new File([payload], name, { type: 'application/json' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: 'Sauvegarde RepMemo' });
+      else {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(file); a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      }
+      const now = nowISO(); setLastExp(now); DB.set('rm:lastExport', now);
+      setDataMsg('Sauvegarde exportée : ' + name + ' (' + Math.round(payload.length / 1024) + ' Ko)');
+    } catch (err) {
+      if (!err || err.name !== 'AbortError') setDataMsg('Export impossible : ' + (err && err.message ? err.message : 'erreur inconnue'));
+    }
+  };
+  const doImport = file => {
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const o = JSON.parse(ev.target.result);
+        if (!o || o.app !== 'repmemo' || !o.data) throw new Error('ce fichier n\'est pas une sauvegarde RepMemo');
+        const cnt = k => { try { return JSON.parse(o.data[k]).length; } catch { return 0; } };
+        setPendingImp({ data: o.data, at: o.exportedAt, wo: cnt('rm:wo'), ex: cnt('rm:ex'), wt: cnt('rm:wt') });
+        setDataMsg(null);
+      } catch (err) { setDataMsg('Fichier non reconnu : ' + err.message); }
+    };
+    r.readAsText(file);
+  };
+  const applyImport = () => {
+    window.__noFlush = true;
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.indexOf('rm:') === 0) keys.push(k); }
+    keys.forEach(k => localStorage.removeItem(k));
+    Object.entries(pendingImp.data).forEach(([k, v]) => { if (k.indexOf('rm:') === 0) localStorage.setItem(k, v); });
+    location.reload();
+  };
+  const daysSinceExp = lastExp ? Math.floor((Date.now() - new Date(lastExp)) / 86400000) : null;
+
+  const wSets = aWo ? aWo.exercises.flatMap(e => e.sets.filter(x => !x.warm)) : [];
+  const progDone = wSets.filter(x => x.completed).length, progTot = wSets.length;
+
+  // Sauvegarde et restauration
+  if (view === 'data') return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <${BackBar} title="Sauvegarde" onBack=${() => { setView('home'); setPendingImp(null); setDataMsg(null); }} />
+      <div style=${{ ...card(C), marginTop:16, marginBottom:12 }}>
+        <div style=${{ fontWeight:700, fontSize:15, marginBottom:4 }}>Exporter mes données</div>
+        <div style=${{ fontSize:13, color:C.muted, marginBottom:12 }}>Séances, exercices, modèles, poids, mensurations, photos et réglages dans un seul fichier. Dernière sauvegarde : ${lastExp ? 'il y a ' + daysSinceExp + ' jour' + (daysSinceExp > 1 ? 's' : '') : 'jamais'}.</div>
+        <button style=${btnS(C)} onClick=${doExport}>Exporter</button>
+      </div>
+      <div style=${{ ...card(C), marginBottom:12 }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12 }}>
+          <div>
+            <div style=${{ fontWeight:700, fontSize:15, marginBottom:4 }}>Règle de stagnation</div>
+            <div style=${{ fontSize:13, color:C.muted }}>Après 2 séances sans progrès : une série de plus à même charge, puis −10 % si tu es toujours bloqué.</div>
+          </div>
+          <button onClick=${() => setOpts(o => ({ ...o, stag: !(o.stag !== false) }))} style=${{ flexShrink:0, background:opts.stag !== false ? C.green : C.card2, color:opts.stag !== false ? '#000' : C.muted, border:'1px solid '+(opts.stag !== false ? C.green : C.border), borderRadius:20, padding:'8px 16px', fontWeight:800, fontSize:13, cursor:'pointer' }}>${opts.stag !== false ? 'Active' : 'Désactivée'}</button>
+        </div>
+      </div>
+      <div style=${{ ...card(C), marginBottom:12 }}>
+        <div style=${{ fontWeight:700, fontSize:15, marginBottom:4 }}>Restaurer une sauvegarde</div>
+        <div style=${{ fontSize:13, color:C.muted, marginBottom:12 }}>Remplace toutes les données actuelles de cet appareil par celles du fichier.</div>
+        ${pendingImp ? html`
+          <div style=${{ background:C.amber+'18', border:'1px solid '+C.amber+'55', borderRadius:12, padding:12, marginBottom:10, fontSize:13 }}>
+            Sauvegarde du ${pendingImp.at ? fmtDate(pendingImp.at) : '?'} : ${pendingImp.wo} séance${pendingImp.wo > 1 ? 's' : ''}, ${pendingImp.ex} exercice${pendingImp.ex > 1 ? 's' : ''}, ${pendingImp.wt} pesée${pendingImp.wt > 1 ? 's' : ''}. Les données actuelles seront remplacées.
+          </div>
+          <div style=${{ display:'flex', gap:8 }}>
+            <button style=${{ ...btnS(C, C.red) }} onClick=${applyImport}>Remplacer mes données</button>
+            <button style=${{ ...btnS(C, C.card2, C.muted), border:'1px solid '+C.border }} onClick=${() => setPendingImp(null)}>Annuler</button>
+          </div>
+        ` : html`
+          <label style=${{ ...btnS(C, C.card2, C.accent), border:'1px solid '+C.accent+'44', textAlign:'center', cursor:'pointer' }}>
+            Choisir un fichier
+            <input type="file" accept=".json,application/json" style=${{ display:'none' }} onChange=${e => { const f = e.target.files[0]; if (f) doImport(f); e.target.value = ''; }} />
+          </label>
+        `}
+      </div>
+      ${dataMsg ? html`<div style=${{ ...card(C), fontSize:13, background:C.aGlow, border:'1px solid '+C.accent+'44' }}>${dataMsg}</div>` : null}
+      <div style=${{ ...card(C), marginTop:12, marginBottom:12 }}>
+        <div style=${{ fontWeight:700, fontSize:15, marginBottom:6 }}>Stockage sur cet appareil</div>
+        <div style=${{ fontSize:13, color:C.muted, lineHeight:1.5 }}>
+          <div>${standalone ? 'Application installée sur l\'écran d\'accueil.' : 'Ouverte dans le navigateur, pas installée.'}</div>
+          <div style=${{ color:persisted ? C.green : C.amber, fontWeight:700, margin:'4px 0' }}>${persisted ? 'Stockage protégé : le navigateur ne le nettoie pas de lui-même.' : 'Stockage non garanti : le navigateur peut le vider après un long moment sans usage.'}</div>
+          ${standalone ? null : html`<div>iPhone : Safari, Partager, puis « Sur l'écran d'accueil ». L'application installée a son propre stockage : exporte ici, puis importe le fichier dans l'application installée.</div>`}
+          <div>Un export régulier reste la seule vraie assurance contre la perte de l'historique.</div>
+        </div>
+      </div>
+      <div style=${{ textAlign:'center', color:C.muted, fontSize:11, margin:'4px 0 12px' }}>RepMemo ${APP_VERSION}</div>
+    </div>
+  `;
+
+  // Template form
+  if (view === 'tpl-form') return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <${BackBar} title=${editTpl ? 'Modifier' : 'Nouveau modèle'} onBack=${() => { setView('pick'); setTplForm({ name:'', icon:'💪', exerciseIds:[], plan:{} }); setEditTpl(null); }} />
+      <div style=${{ display:'flex', flexDirection:'column', gap:14, marginTop:16 }}>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Nom</label>
+          <input style=${inpS(C)} placeholder="Push, Upper..." value=${tplForm.name} onInput=${e => setTplForm(f => ({ ...f, name: e.target.value }))} autoFocus />
+        </div>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:8, fontWeight:600 }}>Icône</label>
+          <div style=${{ display:'flex', flexWrap:'wrap', gap:8 }}>
+            ${ICONS.map(ico => html`
+              <button key=${ico} onClick=${() => setTplForm(f => ({ ...f, icon: ico }))} style=${{ fontSize:22, background:tplForm.icon === ico ? C.aGlow : 'none', border:'1px solid '+(tplForm.icon === ico ? C.accent : C.border), borderRadius:10, width:44, height:44, cursor:'pointer' }}>${ico}</button>
+            `)}
+          </div>
+        </div>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:8, fontWeight:600 }}>Exercices (${tplForm.exerciseIds.length})</label>
+          <div style=${{ maxHeight:260, overflowY:'auto', display:'flex', flexDirection:'column', gap:6 }}>
+            ${exs.map(ex => {
+              const sel = tplForm.exerciseIds.includes(ex.id);
+              return html`
+                <button key=${ex.id} onClick=${() => togTplEx(ex.id)} style=${{ background:sel ? C.aGlow : C.card2, border:'1px solid '+(sel ? C.accent : C.border), borderRadius:10, padding:'10px 12px', cursor:'pointer', textAlign:'left', color:C.text, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div>
+                    <div style=${{ fontWeight:600, fontSize:13 }}>${ex.name}</div>
+                    <div style=${{ color:C.muted, fontSize:11 }}>${ex.muscleGroup}</div>
+                  </div>
+                  <span style=${{ fontSize:18, color:sel ? C.accent : C.border }}>${sel ? '✓' : '+'}</span>
+                </button>
+              `;
+            })}
+          </div>
+        </div>
+        ${tplForm.exerciseIds.length ? (() => {
+          const fp = tplForm.plan || {};
+          const built = buildPlan(tplForm.exerciseIds, fp);
+          const lab = { display:'block', fontSize:11, color:C.muted, marginBottom:3, fontWeight:600 };
+          const small = { ...inpS(C), padding:'8px 10px', fontSize:14, textAlign:'center' };
+          return html`
+            <div>
+              <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:8, fontWeight:600 }}>Réglages de la séance, dans l'ordre</label>
+              <div style=${{ display:'flex', flexDirection:'column', gap:8 }}>
+                ${tplForm.exerciseIds.map((id, i) => {
+                  const ex = exs.find(e => e.id === id);
+                  if (!ex) return null;
+                  const p = fp[id] || planDef;
+                  const isPl = p.r === 'plan';
+                  const last = i === tplForm.exerciseIds.length - 1;
+                  return html`
+                    <div key=${id} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:12, padding:10 }}>
+                      <div style=${{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+                        <span style=${{ ...tagS(C, built[id].ss || /[b-h]$/.test(built[id].lbl) ? C.accent2 : C.accent), fontFamily:FD, fontSize:15, padding:'2px 8px' }}>${built[id].lbl}</span>
+                        <div style=${{ flex:1, fontWeight:700, fontSize:14 }}>${ex.name}</div>
+                        <button onClick=${() => moveTplEx(i, -1)} disabled=${i === 0} style=${{ background:'none', border:'none', color:i === 0 ? C.border : C.muted, cursor:'pointer', fontSize:14 }}>▲</button>
+                        <button onClick=${() => moveTplEx(i, 1)} disabled=${last} style=${{ background:'none', border:'none', color:last ? C.border : C.muted, cursor:'pointer', fontSize:14 }}>▼</button>
+                      </div>
+                      ${isPl ? html`<div style=${{ fontSize:12, color:C.accent, fontWeight:600, marginBottom:8 }}>Séries, reps et charge : plan automatique du programme force.</div>` : null}
+                      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1.3fr', gap:6 }}>
+                        <div><label style=${lab}>Séries</label><input type="number" inputMode="numeric" min="1" max="10" disabled=${isPl} value=${isPl ? '' : p.n} onInput=${e => updPlanF(id, { n:e.target.value })} style=${small} /></div>
+                        <div><label style=${lab}>Reps</label><input type="text" disabled=${isPl} placeholder="8-12" value=${isPl ? '' : p.r} onInput=${e => updPlanF(id, { r:e.target.value })} style=${small} /></div>
+                        <div><label style=${lab}>RIR</label><input type="text" value=${p.rir || ''} onInput=${e => updPlanF(id, { rir:e.target.value })} style=${small} /></div>
+                        <div><label style=${lab}>Repos</label>
+                          <select disabled=${!last && !!p.chain} value=${String(!last && p.chain ? 0 : p.rest)} onChange=${e => updPlanF(id, { rest:+e.target.value })} style=${{ ...small, padding:'8px 4px' }}>
+                            ${(REST_CHOICES.includes(+p.rest) || last || p.chain ? REST_CHOICES : [...REST_CHOICES, +p.rest].sort((a, b) => a - b)).map(v => html`<option key=${v} value=${String(v)}>${v === 0 ? 'Aucun' : fmtRest(v)}</option>`)}
+                          </select>
+                        </div>
+                      </div>
+                      <label style=${{ display:'flex', alignItems:'center', gap:8, marginTop:8, fontSize:12, color:last ? C.border : C.muted }}>
+                        <input type="checkbox" disabled=${last} checked=${!last && !!p.chain} onChange=${e => updPlanF(id, { chain:e.target.checked, rest:e.target.checked ? p.rest : (p.rest || 90) })} style=${{ width:18, height:18 }} />
+                        Enchaîné avec l'exercice suivant, sans repos
+                      </label>
+                    </div>
+                  `;
+                })}
+              </div>
+            </div>
+          `;
+        })() : null}
+        <button style=${btnS(C)} onClick=${saveTpl} disabled=${!tplForm.name.trim() || !tplForm.exerciseIds.length}>${editTpl ? 'Enregistrer' : 'Créer le modèle'}</button>
+      </div>
+    </div>
+  `;
+
+  // Workout detail
+  if (view === 'wo-detail' && selWo) {
+    const tv = selWo.exercises.reduce((a, ex) => a + ex.sets.reduce((b, s) => b + (+s.weight || 0) * (+s.reps || 0), 0), 0);
+    const ts = selWo.exercises.reduce((a, ex) => a + ex.sets.length, 0);
+    const isRun = selWo.kind === 'run';
+    const rn = selWo.run || {};
+    return html`
+      <div style=${{ padding:16, paddingTop:24 }}>
+        <${BackBar} title="Récapitulatif" onBack=${() => setView('home')} right=${html`<${ConfirmDel} onConfirm=${() => { setWos(p => p.filter(w => w.id !== selWo.id)); setView('home'); }} label="Supprimer" />`} />
+        <div style=${{ ...card(C), marginTop:16, marginBottom:12, padding:14 }}>
+          <div style=${{ fontWeight:800, fontSize:17, marginBottom:2 }}>${selWo.name}</div>
+          <div style=${{ color:C.muted, fontSize:13, marginBottom:12, textTransform:'capitalize' }}>${fmtFull(selWo.date)}</div>
+          <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
+            ${(isRun ? [['timer', (selWo.duration || 0) + ' min'], ['flame', selWo.bike ? 'Vélo' : 'Niveau ' + selWo.level], ['ruler', rn.km ? rn.km + ' km' : '—']] : [['timer', (selWo.duration || 0) + 'min'], ['repeat', ts + ' séries'], ['bars', Math.round(tv).toLocaleString('fr') + ' kg']]).map(([ico, val]) => html`
+              <div key=${val} style=${{ textAlign:'center', background:C.card2, borderRadius:10, padding:'8px 4px' }}>
+                <div style=${{ display:'flex', justifyContent:'center' }}><${Ico} name=${ico} color=${C.accent} size=${20} /></div>
+                <div style=${{ fontWeight:700, fontSize:13, marginTop:2, color:C.accent }}>${val}</div>
+              </div>
+            `)}
+          </div>
+        </div>
+        ${isRun ? html`<div style=${{ ...card(C), marginBottom:12, fontSize:13, color:C.muted }}>${rn.talk === false ? 'Allure de conversation non tenue.' : 'Allure de conversation tenue.'}${pace(rn.min, rn.km) ? ' Allure moyenne ' + pace(rn.min, rn.km) + '.' : ''}${rn.pain ? ' Douleur signalée.' : ''}</div>` : html`<button style=${{ ...btnS(C, C.aGlow, C.accent), border:'1px solid '+C.accent+'44', marginBottom:12 }} onClick=${() => startWo(selWo.name, selWo.exercises.map(e => e.exerciseId))}>Refaire cette séance</button>`}
+        ${selWo.exercises.map((ex, ei) => {
+          const best = ex.sets.reduce((a, s) => +s.weight > a ? +s.weight : a, 0);
+          const rm = ex.sets.reduce((b, s) => { const v = oneRM(s.weight, s.reps); return v > b ? v : b; }, 0);
+          return html`
+            <div key=${ei} style=${{ ...card(C), marginBottom:10 }}>
+              <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+                <div style=${{ fontWeight:700, fontSize:15 }}>${ex.exerciseName}</div>
+                <div style=${{ display:'flex', gap:5 }}>
+                  ${best > 0 ? html`<span style=${tagS(C, C.amber)}>${best} kg</span>` : null}
+                  ${rm > 0 ? html`<span style=${tagS(C, C.accent)}>1RM ~${rm} kg</span>` : null}
+                </div>
+              </div>
+              ${ex.sets.map((s, si) => html`
+                <div key=${si} style=${{ display:'grid', gridTemplateColumns:'20px 1fr 1fr 1fr', gap:4, marginBottom:3, alignItems:'center' }}>
+                  <div style=${{ textAlign:'center', fontSize:11, color:C.muted }}>${si + 1}</div>
+                  <div style=${{ textAlign:'center', background:C.card2, borderRadius:6, padding:'5px 2px', fontSize:13, fontWeight:700 }}>${s.weight} kg</div>
+                  <div style=${{ textAlign:'center', background:C.card2, borderRadius:6, padding:'5px 2px', fontSize:13 }}>${s.reps} reps</div>
+                  <div style=${{ textAlign:'center', fontSize:12, color:C.muted }}>${((+s.weight || 0) * (+s.reps || 0)).toLocaleString('fr')} kg</div>
+                </div>
+              `)}
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+
+  // Summary
+  if (view === 'summary' && summary) return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <div style=${{ textAlign:'center', marginBottom:24 }}>
+        <div style=${{ width:84, height:84, borderRadius:'50%', background:C.grad, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 12px', boxShadow:'0 12px 34px rgba(124,92,255,.5)', animation:'pop .5s ease-out' }}><${Ico} name="check" color="#fff" size=${44} /></div>
+        <h2 style=${{ margin:0, fontFamily:FD, fontSize:26, fontWeight:800 }}>Séance terminée !</h2>
+        <div style=${{ color:C.muted, fontSize:14, marginTop:4 }}>${summary.name}</div>
+      </div>
+      <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16 }}>
+        ${(summary.tiles || [['timer','Durée',summary.dur+' min'],['workout','Exercices',summary.exCnt],['repeat','Séries',summary.ts],['bars','Volume',summary.tv.toLocaleString('fr')+' kg']]).map(([ico, lbl, val]) => html`
+          <div key=${lbl} style=${{ ...card(C), textAlign:'center', padding:14 }}>
+            <div style=${{ display:'flex', justifyContent:'center', marginBottom:4 }}><${Ico} name=${ico} color=${C.accent} size=${24} /></div>
+            <div style=${{ fontFamily:FD, fontSize:24, fontWeight:800, color:C.accent }}>${val}</div>
+            <div style=${{ fontSize:12, color:C.muted, marginTop:2 }}>${lbl}</div>
+          </div>
+        `)}
+      </div>
+      ${summary.recs.length > 0 ? html`
+        <div style=${{ ...card(C), background:C.green+'18', border:'1px solid '+C.green+'44', marginBottom:16 }}>
+          <div style=${{ fontWeight:800, color:C.amber, marginBottom:8, display:'flex', alignItems:'center', gap:8 }}><${Ico} name="trophy" color=${C.amber} size=${18} />Nouveaux records</div>
+          ${summary.recs.map((r, i) => html`<div key=${i} style=${{ color:C.text, fontSize:14, marginBottom:3 }}>• ${r}</div>`)}
+        </div>
+      ` : null}
+      ${summary.cmp ? html`
+        <div style=${{ ...card(C), marginBottom:16, display:'flex', alignItems:'center', justifyContent:'space-between', background:(summary.cmp.pct >= 0 ? C.green : C.card2)+'18' }}>
+          <div>
+            <div style=${{ fontSize:12, color:C.muted, fontWeight:600 }}>Comparé à ta dernière séance du même type</div>
+            <div style=${{ fontSize:12, color:C.muted }}>${fmtDate(summary.cmp.date)}</div>
+          </div>
+          ${summary.cmp.pct >= 0 ? html`
+            <div style=${{ fontFamily:FD, fontSize:31, fontWeight:800, color:summary.cmp.pct > 0 ? C.green : C.text }}>${summary.cmp.pct > 0 ? '+' : ''}${summary.cmp.pct} %<span style=${{ fontSize:11, color:C.muted, fontWeight:600 }}> volume</span></div>
+          ` : html`
+            <div style=${{ fontSize:13, color:C.muted, fontWeight:600 }}>${summary.cmp.pct} % de volume</div>
+          `}
+        </div>
+      ` : null}
+      ${summary.progMsg ? html`
+        <div style=${{ ...card(C), background:C.aGlow, border:'1px solid '+C.accent+'44', marginBottom:16, fontSize:14, fontWeight:600 }}>${summary.progMsg}</div>
+      ` : null}
+      <button style=${btnS(C)} onClick=${() => setView('home')}>Retour</button>
+    </div>
+  `;
+
+  // Pick template
+  if (view === 'pick') return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <${BackBar} title="Nouvelle séance" onBack=${() => setView('home')} />
+      <div style=${{ ...card(C), marginTop:16, marginBottom:16, cursor:'pointer', borderColor:C.accent+'55' }} onClick=${() => startWo('Séance libre', [])}>
+        <div style=${{ display:'flex', alignItems:'center', gap:12 }}>
+          <${Ico} name="plus" color=${C.accent} size=${28} />
+          <div>
+            <div style=${{ fontWeight:700, fontSize:15 }}>Séance libre</div>
+            <div style=${{ color:C.muted, fontSize:13 }}>Ajoute tes exercices librement</div>
+          </div>
+        </div>
+      </div>
+      <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+        <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2 }}>Modèles</div>
+        <button onClick=${() => { setTplForm({ name:'', icon:'💪', exerciseIds:[], plan:{} }); setEditTpl(null); setView('tpl-form'); }} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:8, padding:'5px 12px', color:C.accent, cursor:'pointer', fontSize:12, fontWeight:700 }}>+ Nouveau</button>
+      </div>
+      ${tpls.map(t => html`
+        <div key=${t.id} style=${{ ...card(C), marginBottom:8 }}>
+          <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <div style=${{ display:'flex', alignItems:'center', gap:12, flex:1, cursor:'pointer' }} onClick=${() => startWo(t.name, t.exerciseIds, t.id)}>
+              <span style=${{ fontSize:28 }}>${t.icon}</span>
+              <div>
+                <div style=${{ fontWeight:700, fontSize:15 }}>${t.name}</div>
+                <div style=${{ color:C.muted, fontSize:12, marginTop:2 }}>${t.kind === 'run' ? 'Course à pied, niveau ' + run.level : t.exerciseIds.length + ' exercice' + (t.exerciseIds.length > 1 ? 's' : '')}</div>
+              </div>
+            </div>
+            <div style=${{ display:'flex', gap:8, alignItems:'center', flexShrink:0 }}>
+              ${t.kind === 'run' ? null : html`<button onClick=${() => { setTplForm({ name:t.name, icon:t.icon, exerciseIds:[...t.exerciseIds], plan:toFormPlan(t) }); setEditTpl(t.id); setView('tpl-form'); }} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:8, padding:'5px 10px', color:C.muted, cursor:'pointer', fontSize:12 }}>Modifier</button>`}
+              <${ConfirmDel} onConfirm=${() => delTpl(t.id)} label="Supprimer" />
+            </div>
+          </div>
+          ${t.exerciseIds.length > 0 ? html`
+            <div style=${{ marginTop:8, display:'flex', gap:5, flexWrap:'wrap' }}>
+              ${t.exerciseIds.map(id => {
+                const ex = exs.find(e => e.id === id);
+                return ex ? html`<span key=${id} style=${chipS(C)}>${ex.name}</span>` : null;
+              })}
+            </div>
+          ` : null}
+        </div>
+      `)}
+    </div>
+  `;
+
+  // Ligne de série (poids, reps, validation) partagée par la carte simple et la vue par tours
+  const setRow = (wex, ei, set, si, tag) => html`
+    <div key=${set.id} style=${{ display:'grid', gridTemplateColumns:(tag ? '26px' : '16px') + ' 1fr 1fr 42px 16px', gap:6, marginBottom:8, alignItems:'center', opacity:set.completed ? 0.82 : 1, transition:'opacity .2s', boxShadow:set.completed ? 'inset 3px 0 0 '+C.green : 'none' }}>
+      <div style=${{ textAlign:'center', fontSize:11, color:set.warm ? C.amber : (tag ? C.accent2 : C.muted), fontWeight:700 }}>${tag || (set.warm ? 'É' : (si + 1 - wex.sets.filter(x => x.warm).length))}</div>
+      <${Stepper} value=${set.weight} disabled=${set.completed} unit=${wex.perDb ? 'kg / haltère' : (wex.unit || 'kg')} list=${wex.perDb ? DB_WEIGHTS : null} step=${wex.step || 2.5} onChange=${v => updSet(ei, si, 'weight', v)} />
+      <${Stepper} value=${set.reps} disabled=${set.completed} unit=${set.tgt ? 'cible ' + set.tgt : 'reps'} step=${1} start=${set.tgt ? parseInt(set.tgt, 10) : 8} onChange=${v => updSet(ei, si, 'reps', v)} />
+      <button onClick=${() => togSet(ei, si)} style=${{ background:set.completed ? C.green : C.card2, border:'1px solid '+(set.completed ? C.green : C.border), color:set.completed ? '#000' : C.muted, borderRadius:12, width:42, height:46, cursor:'pointer', fontSize:18, fontWeight:800, flexShrink:0, animation:set.completed ? 'pop .35s ease-out' : 'none' }}>${set.completed ? '✓' : '○'}</button>
+      <button onClick=${() => delSet(ei, si)} style=${{ background:'none', border:'none', color:C.border, cursor:'pointer', fontSize:16, padding:0 }}>×</button>
+    </div>
+  `;
+
+  const metaOf = wex => {
+    const m = [];
+    if (wex.rng) m.push(wex.nPlan + ' × ' + wex.rng + (wex.side ? ' par côté' : ''));
+    if (wex.rir) m.push('RIR ' + wex.rir);
+    if (wex.rest) m.push('repos ' + fmtRest(wex.rest));
+    else if (wex.ss) m.push('enchaîné avec ' + wex.ss);
+    return m;
+  };
+
+  const exCard = (wex, ei) => {
+        const lp = wex.last || lastPerf(wex.exerciseId);
+        const meta = [];
+        if (wex.rng) meta.push(wex.nPlan + ' × ' + wex.rng + (wex.side ? ' par côté' : ''));
+        if (wex.rir) meta.push('RIR ' + wex.rir);
+        if (wex.rest) meta.push('repos ' + fmtRest(wex.rest));
+        else if (wex.ss) meta.push('enchaîné avec ' + wex.ss);
+        const vol = wex.sets.filter(s => +s.weight > 0 && +s.reps > 0).reduce((a, s) => a + (+s.weight || 0) * (+s.reps || 0), 0);
+        return html`
+          <div key=${wex.id} style=${{ ...card(C), marginBottom:12 }}>
+            <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8 }}>
+              <div style=${{ flex:1 }}>
+                <div style=${{ display:'flex', alignItems:'center', gap:8 }}>
+                  ${wex.lbl ? html`<span style=${{ ...tagS(C, wex.ss || /[b-c]$/.test(wex.lbl) ? C.accent2 : C.accent), fontFamily:FD, fontSize:15, padding:'2px 8px' }}>${wex.lbl}</span>` : null}
+                  <div style=${{ fontFamily:FD, fontWeight:800, fontSize:23, letterSpacing:.2, lineHeight:1.1 }}>${wex.exerciseName}</div>
+                </div>
+                ${meta.length ? html`<div style=${{ color:C.muted, fontSize:12, marginTop:3 }}>${meta.join(' · ')}</div>` : null}
+                ${wex.flag === 'plus' ? html`<div style=${{ color:C.amber, fontSize:13, fontWeight:700, marginTop:2 }}>Stagnation sur 2 séances : même charge, une série de plus.${wex.flagInfo ? ' (' + wex.flagInfo + ')' : ''}</div>` : null}
+                ${wex.flag === 'drop' ? html`<div style=${{ color:C.amber, fontSize:13, fontWeight:700, marginTop:2 }}>Toujours bloqué : charge réduite de 10 %, tu remontes ensuite.${wex.flagInfo ? ' (' + wex.flagInfo + ')' : ''}</div>` : null}
+                ${wex.rx ? html`<div style=${{ color:C.accent, fontSize:13, fontWeight:700, marginTop:2 }}>Plan : ${wex.rx.n} × ${wex.rx.r} à ${wex.rx.kg} kg par haltère</div>` : null}
+                ${wex.up ? html`<div style=${{ color:C.green, fontSize:13, fontWeight:700, marginTop:2 }}>↑ Montée de charge : ${wex.up.from} → ${wex.up.to} kg (${wex.up.sets} × ${wex.up.reps} atteint)</div>` : null}
+                ${lp.length > 0 ? html`<div style=${{ color:C.muted, fontSize:12, marginTop:2 }}>Dernière : ${lp.map(s => s.weight + '×' + s.reps).join(' / ')}</div>` : null}
+              </div>
+              <div style=${{ display:'flex', gap:6, alignItems:'center' }}>
+                ${vol > 0 ? html`<span style=${tagS(C, C.amber)}>${vol.toLocaleString('fr')} kg</span>` : null}
+                <button onClick=${() => moveEx(ei, -1)} disabled=${ei === 0} style=${{ background:'none', border:'none', color:ei === 0 ? C.border : C.muted, cursor:ei === 0 ? 'default' : 'pointer', fontSize:14, padding:'0 2px' }}>▲</button>
+                <button onClick=${() => moveEx(ei, 1)} disabled=${ei === aWo.exercises.length - 1} style=${{ background:'none', border:'none', color:ei === aWo.exercises.length - 1 ? C.border : C.muted, cursor:'pointer', fontSize:14, padding:'0 2px' }}>▼</button>
+                <button onClick=${() => delEx(ei)} style=${{ background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:16, padding:0 }}>✕</button>
+              </div>
+            </div>
+            <div style=${{ marginBottom:8 }}><${ExTimer} /></div>
+            ${wex.sets.map((set, si) => setRow(wex, ei, set, si))}
+            <button onClick=${() => addSet(ei)} style=${{ marginTop:4, background:'none', border:'1px dashed '+C.border, borderRadius:10, padding:'7px', color:C.muted, cursor:'pointer', width:'100%', fontSize:13 }}>+ Série</button>
+          </div>
+        `;
+  };
+
+  // Exercices enchaînés (4a, 4b, 4c) : une seule carte, séries rangées par tours
+  const exGroups = [];
+  if (aWo) aWo.exercises.forEach((wex, ei) => {
+    const g = exGroups[exGroups.length - 1];
+    const prev = g ? aWo.exercises[g[g.length - 1]] : null;
+    if (prev && prev.ss && prev.ss === wex.lbl) g.push(ei); else exGroups.push([ei]);
+  });
+  const grpCard = g => {
+    const mem = g.map(ei => [aWo.exercises[ei], ei]);
+    const rounds = Math.max(...mem.map(([w]) => w.sets.length));
+    return html`
+      <div key=${'g' + mem[0][0].id} style=${{ ...card(C), marginBottom:12, borderColor:C.accent2 + '55' }}>
+        <div style=${{ fontSize:12, color:C.accent2, fontWeight:700, marginBottom:8 }}>Enchaînés, sans repos entre eux : ${mem.map(([w]) => w.lbl).join(' puis ')}</div>
+        ${mem.map(([w, ei]) => {
+          const lp = w.last || lastPerf(w.exerciseId);
+          return html`
+            <div key=${w.id} style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8 }}>
+              <div style=${{ flex:1 }}>
+                <div style=${{ display:'flex', alignItems:'center', gap:8 }}>
+                  <span style=${{ ...tagS(C, C.accent2), fontFamily:FD, fontSize:15, padding:'2px 8px' }}>${w.lbl}</span>
+                  <div style=${{ fontFamily:FD, fontWeight:800, fontSize:21, lineHeight:1.1 }}>${w.exerciseName}</div>
+                </div>
+                <div style=${{ color:C.muted, fontSize:12, marginTop:3 }}>${metaOf(w).join(' · ')}</div>
+                ${w.up ? html`<div style=${{ color:C.green, fontSize:12, fontWeight:700, marginTop:2 }}>↑ Montée de charge : ${w.up.from} → ${w.up.to} kg</div>` : null}
+                ${w.flag ? html`<div style=${{ color:C.amber, fontSize:12, fontWeight:700, marginTop:2 }}>${w.flag === 'plus' ? 'Stagnation : une série de plus.' : 'Toujours bloqué : charge réduite de 10 %.'}</div>` : null}
+                ${lp.length > 0 ? html`<div style=${{ color:C.muted, fontSize:12, marginTop:2 }}>Dernière : ${lp.map(x => x.weight + '×' + x.reps).join(' / ')}</div>` : null}
+              </div>
+              <button onClick=${() => delEx(ei)} style=${{ background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:16, padding:0 }}>✕</button>
+            </div>
+          `;
+        })}
+        ${Array.from({ length: rounds }, (_, r) => html`
+          <div key=${'r' + r} style=${{ marginTop:6 }}>
+            <div style=${{ fontSize:12, color:C.muted, fontWeight:700, marginBottom:6 }}>Tour ${r + 1}</div>
+            ${mem.map(([w, ei]) => w.sets[r] ? setRow(w, ei, w.sets[r], r, w.lbl) : null)}
+          </div>
+        `)}
+        <div style=${{ display:'flex', gap:6, marginTop:4 }}>
+          ${mem.map(([w, ei]) => html`<button key=${w.id} onClick=${() => addSet(ei)} style=${{ flex:1, background:'none', border:'1px dashed '+C.border, borderRadius:10, padding:'7px', color:C.muted, cursor:'pointer', fontSize:12 }}>+ Série ${w.lbl}</button>`)}
+        </div>
+      </div>
+    `;
+  };
+
+  // Course à pied en cours
+  if (view === 'active' && aWo && aWo.kind === 'run') {
+    const rn = aWo.run, blk = runBlock(aWo.level, aWo.sortie);
+    const pc = pace(rn.min, rn.km);
+    const choice = (on, txt, f) => html`<button onClick=${f} style=${{ flex:1, background:on ? C.aGlow : C.card2, border:'1px solid '+(on ? C.accent : C.border), borderRadius:12, padding:'12px 8px', color:on ? C.accent : C.muted, cursor:'pointer', fontWeight:700, fontSize:14 }}>${txt}</button>`;
+    return html`
+      <div style=${{ padding:16, paddingTop:16 }}>
+        <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+          <div>
+            <h2 style=${{ margin:0, fontFamily:FD, fontSize:26, fontWeight:800 }}>${aWo.name}</h2>
+            <div style=${{ color:C.muted, fontSize:13, marginTop:2 }}>${elapsed} min</div>
+          </div>
+          <div style=${{ display:'flex', gap:8 }}>
+            <${ConfirmDel} onConfirm=${() => { setAWo(null); setView('home'); }} label="Abandonner" />
+            <button style=${{ ...btnS(C, C.green, '#000'), width:'auto', padding:'9px 18px', fontSize:14, borderRadius:10 }} onClick=${finishRun}>Terminer</button>
+          </div>
+        </div>
+        <div style=${{ ...card(C), marginBottom:12 }}>
+          ${aWo.bike ? html`
+            <div style=${{ fontFamily:FD, fontWeight:800, fontSize:30 }}>30 min de vélo</div>
+            <div style=${{ color:C.muted, fontSize:14, marginTop:4 }}>Allure facile, à la place de la course. Ça laisse tes tendons récupérer.</div>
+          ` : html`
+            <div style=${{ fontFamily:FD, fontWeight:800, fontSize:26 }}>Niveau ${aWo.level}, sortie ${aWo.sortie} sur 2</div>
+            <div style=${{ marginTop:10, fontSize:15, lineHeight:1.6 }}>
+              <div>5 min de marche rapide</div>
+              <div style=${{ fontWeight:800, color:C.accent }}>${blk.b}</div>
+              <div>5 min de marche</div>
+            </div>
+            <div style=${{ color:C.muted, fontSize:13, marginTop:10 }}>${blk.m} min courues. Allure de conversation : tu dois pouvoir dire une phrase complète. Sinon tu ralentis ou tu marches.</div>
+            ${aWo.level >= 9 && aWo.level < 12 ? html`<div style=${{ color:C.muted, fontSize:12, marginTop:6 }}>Accélérations : 20 s en montant progressivement jusqu'à une allure rapide mais relâchée, 1 min de trot entre deux.</div>` : null}
+          `}
+        </div>
+        <div style=${{ ...card(C), marginBottom:12 }}>
+          <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+            <div><div style=${{ fontSize:12, color:C.muted, marginBottom:4, fontWeight:600 }}>Durée</div><${Stepper} value=${rn.min} unit="min" step=${1} start=${30} onChange=${v => updRun('min', v)} /></div>
+            <div><div style=${{ fontSize:12, color:C.muted, marginBottom:4, fontWeight:600 }}>Distance</div><${Stepper} value=${rn.km} unit="km" step=${0.5} start=${3} onChange=${v => updRun('km', v)} /></div>
+          </div>
+          ${pc ? html`<div style=${{ fontSize:13, color:C.muted, marginBottom:10 }}>Allure moyenne : <b style=${{ color:C.text }}>${pc}</b></div>` : null}
+          ${aWo.bike ? null : html`
+            <div style=${{ fontSize:12, color:C.muted, marginBottom:6, fontWeight:600 }}>Allure de conversation tenue ?</div>
+            <div style=${{ display:'flex', gap:8, marginBottom:12 }}>${choice(rn.talk !== false, 'Oui', () => updRun('talk', true))}${choice(rn.talk === false, 'Non', () => updRun('talk', false))}</div>
+            <div style=${{ fontSize:12, color:C.muted, marginBottom:6, fontWeight:600 }}>Douleur qui augmente pendant la sortie (tibias, genoux, Achille) ?</div>
+            <div style=${{ display:'flex', gap:8 }}>${choice(!rn.pain, 'Non', () => updRun('pain', false))}${choice(!!rn.pain, 'Oui', () => updRun('pain', true))}</div>
+          `}
+        </div>
+        <div style=${{ ...card(C), marginBottom:12 }}>
+          <label style=${{ display:'block', color:C.muted, fontSize:12, fontWeight:600, marginBottom:6 }}>Note de sortie</label>
+          <textarea rows="2" value=${aWo.notes || ''} onInput=${e => setAWo(p => ({ ...p, notes: e.target.value }))} style=${{ ...inpS(C), resize:'none', fontFamily:'inherit', fontSize:13 }} placeholder="Sensations, terrain, météo..."></textarea>
+        </div>
+      </div>
+    `;
+  }
+
+  // Active workout
+  if (view === 'active' && aWo) return html`
+    <div style=${{ padding:16, paddingTop:16 }}>
+      <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+        <div>
+          <h2 style=${{ margin:0, fontFamily:FD, fontSize:26, fontWeight:800 }}>${aWo.name}</h2>
+          <div style=${{ color:C.muted, fontSize:13, marginTop:2 }}>⏱ ${elapsed} min</div>
+        </div>
+        <div style=${{ display:'flex', gap:8 }}>
+          <${ConfirmDel} onConfirm=${() => { setAWo(null); setShowRest(false); setView('home'); }} label="Abandonner" />
+          <button style=${{ ...btnS(C, C.green, '#000'), width:'auto', padding:'9px 18px', fontSize:14, borderRadius:10 }} onClick=${finish}>Terminer ✓</button>
+        </div>
+      </div>
+      ${toast ? html`
+        <div style=${{ position:'fixed', top:14, left:'50%', transform:'translateX(-50%)', zIndex:300, background:'linear-gradient(135deg,'+C.amber+',#ff8a3d)', color:'#1a1030', borderRadius:14, padding:'10px 18px', fontWeight:800, fontSize:14, boxShadow:'0 8px 28px rgba(255,138,61,.45)', maxWidth:'90%', display:'flex', alignItems:'center', gap:8, animation:'pop .4s ease-out' }}><${Ico} name="trophy" color="#1a1030" size=${18} />${toast}</div>
+      ` : null}
+      ${aWo.deload ? html`<div style=${{ ...card(C), padding:12, marginBottom:12, background:C.amber+'14', border:'1px solid '+C.amber+'44', fontSize:13, fontWeight:600 }}>Rotation de décharge : une série de moins par exercice, mêmes charges, RIR 3. Le décliné suit son plan.</div>` : null}
+      <div style=${{ height:6, background:C.card2, borderRadius:3, overflow:'hidden', marginBottom:4 }}>
+        <div style=${{ height:'100%', background:'linear-gradient(90deg,'+C.accent+','+C.green+')', width:(progTot ? Math.round(progDone / progTot * 100) : 0)+'%', transition:'width .3s' }}></div>
+      </div>
+      <div style=${{ fontSize:11, color:C.muted, marginBottom:12 }}>${progDone} / ${progTot} séries</div>
+      <div style=${{ display:'flex', alignItems:'center', gap:6, marginBottom:14, flexWrap:'wrap' }}>
+        <span style=${{ fontSize:11, color:C.muted, fontWeight:600 }}>Repos :</span>
+        ${REST_OPT.map(o => html`
+          <button key=${o.v} onClick=${() => setRt(o.v)} style=${{ background:rt === o.v ? C.aGlow : 'none', border:'1px solid '+(rt === o.v ? C.accent : C.border), borderRadius:20, padding:'3px 10px', color:rt === o.v ? C.accent : C.muted, cursor:'pointer', fontSize:11, fontWeight:600 }}>${o.l}</button>
+        `)}
+      </div>
+      ${exGroups.map(g => g.length === 1 ? exCard(aWo.exercises[g[0]], g[0]) : grpCard(g))}
+      ${showAdd ? html`
+        <div style=${{ ...card(C), marginBottom:12 }}>
+          <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+            <div style=${{ fontWeight:700, fontSize:14 }}>Ajouter un exercice</div>
+            <button onClick=${() => setShowAdd(false)} style=${{ background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:18 }}>✕</button>
+          </div>
+          <div style=${{ maxHeight:260, overflowY:'auto', display:'flex', flexDirection:'column', gap:6 }}>
+            ${exs.map(ex => html`
+              <button key=${ex.id} onClick=${() => addEx(ex.id)} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:10, padding:'10px 12px', cursor:'pointer', textAlign:'left', color:C.text, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                <div>
+                  <div style=${{ fontWeight:600, fontSize:13 }}>${ex.name}</div>
+                  <div style=${{ color:C.muted, fontSize:11, marginTop:1 }}>${ex.muscleGroup}</div>
+                </div>
+                <span style=${{ color:C.accent, fontSize:20, fontWeight:700 }}>+</span>
+              </button>
+            `)}
+          </div>
+        </div>
+      ` : html`<button style=${{ ...btnS(C, C.card2, C.accent), border:'1px solid '+C.accent+'44', marginBottom:12 }} onClick=${() => setShowAdd(true)}>+ Ajouter un exercice</button>`}
+      <div style=${{ ...card(C), marginBottom:12 }}>
+        <label style=${{ display:'block', color:C.muted, fontSize:12, fontWeight:600, marginBottom:6 }}>Note de séance</label>
+        <textarea rows="2" value=${aWo.notes || ''} onInput=${e => setAWo(p => ({ ...p, notes: e.target.value }))} style=${{ ...inpS(C), resize:'none', fontFamily:'inherit', fontSize:13 }} placeholder="Fatigue, bonne nuit, PR visé..."></textarea>
+      </div>
+      ${showRest ? html`<${RestTimer} key=${restKey} onDone=${() => setShowRest(false)} ds=${restSecs} />` : null}
+    </div>
+  `;
+
+  // Home
+  const allR = [...wos].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const lastWo = allR[0];
+  const avail = ROT.filter(id => tpls.some(t => t.id === id));
+  const lastRot = allR.find(w => ROT.includes(w.tplId));
+  const li = lastRot ? avail.indexOf(lastRot.tplId) : -1;
+  const nextTpl = avail.length ? tpls.find(t => t.id === avail[(li + 1) % avail.length]) : null;
+  const nextIdx = nextTpl ? avail.indexOf(nextTpl.id) : -1;
+  const deloadWeek = prog.on && !prog.finished && (prog.week === 4 || prog.week === 8);
+  const nextRx = nextTpl && prog.on && !prog.finished && (nextTpl.id === 'pa' || nextTpl.id === 'pb') ? progRx(prog, nextTpl.id === 'pa' ? 'A' : 'B') : null;
+  const weekStart = (() => { const d = new Date(); const dow = (d.getDay() + 6) % 7; d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - dow); return d.getTime(); })();
+  const weekCount = wos.filter(w => new Date(w.date).getTime() >= weekStart).length;
+  const recent = search
+    ? allR.filter(wo => wo.name.toLowerCase().includes(search.toLowerCase()) || wo.exercises.some(ex => ex.exerciseName.toLowerCase().includes(search.toLowerCase())))
+    : allR.slice(0, 15);
+
+  return html`
+    <div style=${{ padding:16, paddingTop:20 }}>
+      <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
+        <div>
+          <h1 style=${{ margin:0, fontFamily:FD, fontStyle:'italic', fontSize:40, fontWeight:800, letterSpacing:0.5, lineHeight:1, background:C.grad, WebkitBackgroundClip:'text', backgroundClip:'text', WebkitTextFillColor:'transparent', display:'inline-block', paddingRight:6 }}>RepMemo</h1>
+          <p style=${{ margin:'4px 0 0', color:C.muted, fontSize:14 }}>${weekCount === 0 ? 'Nouvelle semaine, on y va.' : weekCount + ' séance' + (weekCount > 1 ? 's' : '') + ' cette semaine sur ' + goal}</p>
+        </div>
+        <div style=${{ display:'flex', gap:8 }}>
+          <button onClick=${() => setView('data')} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:10, padding:'8px 12px', cursor:'pointer', fontSize:12, fontWeight:700, color:C.muted }}>Sauvegarde</button>
+          <button onClick=${toggleMode} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:10, padding:'8px 10px', cursor:'pointer', fontSize:16 }}><${Ico} name=${mode === 'dark' ? 'sun' : 'moon'} color=${C.muted} size=${18} /></button>
+        </div>
+      </div>
+      ${nextTpl ? html`
+        <div style=${{ position:'relative', overflow:'hidden', borderRadius:28, padding:'20px 18px 18px', marginBottom:12, color:'#fff', background:C.grad, boxShadow:'0 18px 44px rgba(124,92,255,.38)', animation:'rise .5s ease-out' }}>
+          <svg width="270" height="270" viewBox="0 0 270 270" style=${{ position:'absolute', right:-80, top:-60, opacity:.17, pointerEvents:'none' }}>
+            <circle cx="135" cy="135" r="124" fill="none" stroke="#fff" strokeWidth="16" />
+            <circle cx="135" cy="135" r="84" fill="none" stroke="#fff" strokeWidth="6" />
+            <circle cx="135" cy="135" r="26" fill="#fff" />
+          </svg>
+          <div style=${{ position:'relative', display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12 }}>
+            <div style=${{ minWidth:0, flex:1 }}>
+              <div style=${{ fontSize:13, fontWeight:700, opacity:.88 }}>Séance du jour</div>
+              <div style=${{ fontFamily:FD, fontStyle:'italic', fontWeight:800, fontSize:nextTpl.name.length <= 6 ? 68 : nextTpl.name.length <= 8 ? 50 : 40, lineHeight:.9, textTransform:'uppercase', marginTop:8, overflowWrap:'normal' }}>${nextTpl.name}</div>
+            </div>
+            <div style=${{ textAlign:'center', cursor:'pointer', flexShrink:0 }} onClick=${() => setGoal(g => g >= 7 ? 2 : g + 1)}>
+              <${Ring} value=${weekCount} max=${goal} />
+              <div style=${{ fontSize:10, opacity:.88, marginTop:-2 }}>sur ${goal} cette semaine</div>
+            </div>
+          </div>
+          ${nextTpl.kind === 'run' ? html`
+            <div style=${{ position:'relative', marginTop:18 }}>
+              <div style=${{ fontSize:12, fontWeight:700, opacity:.88, marginBottom:6 }}>${run.bike > 0 ? 'Vélo à la place de la course' : 'Sortie ' + (nextTpl.id === 'c1' ? 1 : 2) + ' sur 2, allure de conversation'}</div>
+              <div style=${{ display:'flex', gap:8 }}>
+                <div style=${{ flex:1, background:'rgba(255,255,255,.17)', borderRadius:14, padding:'8px 12px' }}>
+                  <div style=${{ fontFamily:FD, fontWeight:800, fontSize:30, lineHeight:1, whiteSpace:'nowrap' }}>${run.bike > 0 ? 'Vélo' : 'Niveau ' + Math.min(12, run.level)}</div>
+                  <div style=${{ fontSize:11, opacity:.85 }}>${run.bike > 0 ? 'récupération' : '12 niveaux'}</div>
+                </div>
+                <div style=${{ flex:1, background:'rgba(255,255,255,.17)', borderRadius:14, padding:'8px 12px' }}>
+                  <div style=${{ fontFamily:FD, fontWeight:800, fontSize:30, lineHeight:1, whiteSpace:'nowrap' }}>${run.bike > 0 ? '30 min' : runBlock(run.level, nextTpl.id === 'c1' ? 1 : 2).m + ' min'}</div>
+                  <div style=${{ fontSize:11, opacity:.85 }}>${run.bike > 0 ? 'facile' : 'de course'}</div>
+                </div>
+              </div>
+              ${run.bike > 0 ? null : html`<div style=${{ fontSize:12, opacity:.9, marginTop:8 }}>${runBlock(run.level, nextTpl.id === 'c1' ? 1 : 2).b}</div>`}
+            </div>
+          ` : nextRx ? html`
+            <div style=${{ position:'relative', marginTop:18 }}>
+              <div style=${{ fontSize:12, fontWeight:700, opacity:.88, marginBottom:6 }}>Décliné haltères, semaine ${prog.week} sur 12</div>
+              <div style=${{ display:'flex', gap:8 }}>
+                <div style=${{ flex:1, background:'rgba(255,255,255,.17)', borderRadius:14, padding:'8px 12px' }}>
+                  <div style=${{ fontFamily:FD, fontWeight:800, fontSize:34, lineHeight:1 }}>${nextRx.n} × ${nextRx.r}</div>
+                  <div style=${{ fontSize:11, opacity:.85 }}>séries × reps</div>
+                </div>
+                <div style=${{ flex:1, background:'rgba(255,255,255,.17)', borderRadius:14, padding:'8px 12px' }}>
+                  <div style=${{ fontFamily:FD, fontWeight:800, fontSize:34, lineHeight:1 }}>${nextRx.kg} kg</div>
+                  <div style=${{ fontSize:11, opacity:.85 }}>par haltère</div>
+                </div>
+              </div>
+            </div>
+          ` : html`
+            <div style=${{ position:'relative', display:'flex', gap:6, flexWrap:'wrap', marginTop:18 }}>
+              ${nextTpl.exerciseIds.slice(0, 4).map(id => { const e = exs.find(x => x.id === id); return e ? html`<span key=${id} style=${{ background:'rgba(255,255,255,.17)', borderRadius:6, padding:'4px 9px', fontSize:12, fontWeight:600 }}>${e.name}</span>` : null; })}
+            </div>
+          `}
+          <button disabled=${nextTpl.kind === 'run' && run.pend} onClick=${() => startWo(nextTpl.name, nextTpl.exerciseIds, nextTpl.id)} style=${{ ...btnS(C, '#fff', '#2b1670'), position:'relative', marginTop:16, padding:'14px', boxShadow:'0 8px 24px rgba(20,8,60,.35)', opacity:nextTpl.kind === 'run' && run.pend ? .45 : 1 }}>
+            <span style=${{ display:'flex', alignItems:'center', justifyContent:'center', gap:8, fontFamily:FD, fontStyle:'italic', fontSize:24, fontWeight:800, letterSpacing:.5 }}><${Ico} name="play" color="#2b1670" size=${20} />Commencer</span>
+          </button>
+        </div>
+      ` : null}
+      <button style=${{ ...btnS(C, 'transparent', C.text), border:'1px solid '+C.border, marginBottom:14, fontWeight:700 }} onClick=${() => setView('pick')}>Autre séance</button>
+      ${run.pend ? html`
+        <div style=${{ ...card(C), marginBottom:12, background:C.green+'14', border:'1px solid '+C.green+'44' }}>
+          <div style=${{ fontWeight:800, fontSize:15, marginBottom:4 }}>Niveau ${run.level} de course : 2 sorties tenues</div>
+          <div style=${{ fontSize:13, color:C.muted, marginBottom:10 }}>Rien n'a fait mal dans les 48 h après la Course 2 (tibias, genoux, tendon d'Achille, voûte plantaire) ?</div>
+          <div style=${{ display:'flex', flexDirection:'column', gap:8 }}>
+            <button style=${btnS(C)} onClick=${() => resolveRun('up')}>${run.level >= 11 ? 'Rien : passer au test (niveau 12)' : 'Rien : passer au niveau ' + (run.level + 1)}</button>
+            ${run.level <= 3 && !run.skipUsed ? html`<button style=${btnS(C, C.card2, C.accent)} onClick=${() => resolveRun('skip')}>Trop facile : sauter au niveau ${run.level + 2} (une seule fois)</button>` : null}
+            <button style=${btnS(C, C.card2, C.muted)} onClick=${() => resolveRun('redo')}>Refaire le niveau ${run.level}</button>
+            <button style=${btnS(C, C.card2, C.red)} onClick=${() => resolveRun('pain')}>Douleur : 2 sorties de vélo, retour au niveau ${Math.max(1, run.level - 1)}</button>
+          </div>
+        </div>
+      ` : null}
+      <div style=${{ ...card(C), marginBottom:12, padding:14 }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8 }}>
+          <div style=${{ fontWeight:800, fontSize:15 }}>Rotation de 7 séances</div>
+          <div style=${{ fontSize:12, color:C.muted }}>Course niveau ${Math.min(12, run.level)}${run.bike > 0 ? ', vélo' : ''}, sorties ${run.c1 ? '1 ✓' : '1'} ${run.c2 ? '2 ✓' : '2'}</div>
+        </div>
+        <div style=${{ display:'flex', flexWrap:'wrap', gap:6 }}>
+          ${avail.map((id, i) => html`<span key=${id} style=${{ ...tagS(C, i < nextIdx ? C.green : i === nextIdx ? C.accent : C.muted), border:i === nextIdx ? '1px solid '+C.accent : '1px solid transparent' }}>${ROT_LBL[id] || id}</span>`)}
+        </div>
+        ${deloadWeek ? html`<div style=${{ fontSize:12, color:C.amber, fontWeight:700, marginTop:10 }}>Rotation de décharge : une série de moins par exercice, mêmes charges, RIR 3. Abdos et course inchangés.</div>` : null}
+        ${prog.on && prog.week === 12 ? html`<div style=${{ fontSize:12, color:C.amber, fontWeight:700, marginTop:10 }}>Rotation de test : décliné à 50 kg au Push B, test de 5 km à la Course 2.</div>` : null}
+      </div>
+      ${wos.length >= 3 && (daysSinceExp === null || daysSinceExp >= 14) ? html`
+        <div onClick=${() => setView('data')} style=${{ ...card(C), marginBottom:12, padding:12, cursor:'pointer', background:C.amber+'14', border:'1px solid '+C.amber+'44', fontSize:13 }}>
+          <span style=${{ fontWeight:700 }}>Pense à sauvegarder.</span> ${daysSinceExp === null ? 'Aucune sauvegarde faite pour l\'instant.' : 'Dernière sauvegarde il y a ' + daysSinceExp + ' jours.'} Toucher pour exporter.
+        </div>
+      ` : null}
+      ${prog.on ? html`
+        <div style=${{ ...card(C), marginBottom:16, padding:14 }}>
+          <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <div>
+              <div style=${{ fontSize:13, color:C.muted, fontWeight:700, letterSpacing:0.2 }}>Programme force · décliné haltères</div>
+              <div style=${{ fontFamily:FD, fontSize:24, fontWeight:800, marginTop:2 }}>${prog.finished ? 'Cycle terminé' : 'Semaine ' + prog.week + ' / 12'}</div>
+              <div style=${{ display:'flex', gap:6, marginTop:6 }}>
+                <span style=${tagS(C, prog.doneA ? C.green : C.muted)}>Push A ${prog.doneA ? '✓' : ''}</span>
+                <span style=${tagS(C, prog.doneB ? C.green : C.muted)}>Push B ${prog.doneB ? '✓' : ''}</span>
+                ${prog.sw50 ? html`<span style=${tagS(C, C.amber)}>B à 50 kg</span>` : null}
+              </div>
+            </div>
+            <div style=${{ display:'flex', flexDirection:'column', gap:6 }}>
+              <div style=${{ display:'flex', gap:6 }}>
+                <button onClick=${() => setProg(p => ({ ...p, week:Math.max(1, p.week - 1), doneA:false, doneB:false, finished:false }))} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:8, width:34, height:34, color:C.text, cursor:'pointer', fontSize:18 }}>−</button>
+                <button onClick=${() => setProg(p => ({ ...p, week:Math.min(12, p.week + 1), doneA:false, doneB:false }))} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:8, width:34, height:34, color:C.text, cursor:'pointer', fontSize:18 }}>+</button>
+              </div>
+              <button onClick=${() => setProg(p => ({ ...p, on:false }))} style=${{ background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:11 }}>Mettre en pause</button>
+            </div>
+          </div>
+        </div>
+      ` : html`
+        <button onClick=${() => setProg(p => ({ ...p, on:true }))} style=${{ background:'none', border:'1px dashed '+C.border, borderRadius:12, padding:10, color:C.muted, cursor:'pointer', width:'100%', fontSize:13, marginBottom:16 }}>Reprendre le programme force (semaine ${prog.week})</button>
+      `}
+      ${!search && lastWo ? html`
+        <div style=${{ marginBottom:20 }}>
+          <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, marginBottom:8 }}>Dernière séance</div>
+          <div style=${{ ...card(C), cursor:'pointer', borderColor:C.accent+'33' }} onClick=${() => { setSelWo(lastWo); setView('wo-detail'); }}>
+            <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+              <div>
+                <div style=${{ fontWeight:800, fontSize:16 }}>${lastWo.name}</div>
+                <div style=${{ color:C.muted, fontSize:12, marginTop:2, textTransform:'capitalize' }}>${fmtFull(lastWo.date)}</div>
+              </div>
+              <span style=${{ color:C.accent, fontSize:20 }}>›</span>
+            </div>
+            ${lastWo.kind === 'run' ? html`<div style=${{ borderTop:'1px solid '+C.border, padding:'8px 0 2px', fontSize:13, color:C.muted }}>${lastWo.bike ? 'Vélo' : 'Niveau ' + lastWo.level}, ${lastWo.duration || 0} min${lastWo.run && lastWo.run.km ? ', ' + lastWo.run.km + ' km' : ''}</div>` : null}
+            ${lastWo.exercises.map((ex, ei) => {
+              const best = ex.sets.reduce((a, s) => +s.weight > a ? +s.weight : a, 0);
+              const totalReps = ex.sets.reduce((a, s) => a + (+s.reps || 0), 0);
+              return html`
+                <div key=${ei} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'6px 0', borderTop:'1px solid '+C.border }}>
+                  <div style=${{ fontSize:13, fontWeight:600 }}>${ex.exerciseName}</div>
+                  <div style=${{ display:'flex', gap:6, alignItems:'center' }}>
+                    <span style=${{ fontSize:12, color:C.muted }}>${ex.sets.length}×</span>
+                    ${best > 0 ? html`<span style=${tagS(C, C.amber)}>${best} kg</span>` : null}
+                    <span style=${{ fontSize:12, color:C.muted }}>${totalReps} reps</span>
+                  </div>
+                </div>
+              `;
+            })}
+          </div>
+        </div>
+      ` : null}
+      <div style=${{ marginBottom:12 }}>
+        <input style=${{ ...inpS(C), fontSize:14 }} placeholder="Rechercher une séance ou un exercice" value=${search} onInput=${e => setSearch(e.target.value)} />
+      </div>
+      ${recent.length > 0 ? html`
+        <div>
+          <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, marginBottom:8 }}>Historique</div>
+          ${recent.map(wo => {
+            const vol = wo.exercises.reduce((a, ex) => a + ex.sets.reduce((b, s) => b + (+s.weight || 0) * (+s.reps || 0), 0), 0);
+            const sets = wo.exercises.reduce((a, ex) => a + ex.sets.length, 0);
+            return html`
+              <div key=${wo.id} style=${{ ...card(C), marginBottom:8, cursor:'pointer' }} onClick=${() => { setSelWo(wo); setView('wo-detail'); }}>
+                <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                  <div style=${{ flex:1 }}>
+                    <div style=${{ fontWeight:700, fontSize:15 }}>${wo.name}</div>
+                    <div style=${{ color:C.muted, fontSize:12, marginTop:2 }}>${fmtDate(wo.date)}</div>
+                  </div>
+                  <div style=${{ textAlign:'right', marginLeft:8 }}>
+                    <div style=${{ color:C.accent, fontWeight:700, fontSize:14 }}>${Math.round(vol).toLocaleString('fr')} kg</div>
+                    <div style=${{ color:C.muted, fontSize:12 }}>${sets} séries · ${wo.duration || 0} min</div>
+                  </div>
+                  <span style=${{ color:C.muted, fontSize:20, marginLeft:8 }}>›</span>
+                </div>
+                <div style=${{ marginTop:8, display:'flex', gap:5, flexWrap:'wrap' }}>
+                  ${wo.exercises.slice(0, 4).map(ex => html`<span key=${ex.id} style=${chipS(C)}>${ex.exerciseName}</span>`)}
+                  ${wo.exercises.length > 4 ? html`<span style=${chipS(C)}>+${wo.exercises.length - 4}</span>` : null}
+                </div>
+              </div>
+            `;
+          })}
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
+// ─── EXERCISES ───────────────────────────────────────────────
+function ExercisesTab({ exs, setExs, wos, lastPerf, bestWeight }) {
+  const C = useC();
+  const [view, setView] = useState('list');
+  const [sel, setSel] = useState(null);
+  const [filter, setFilter] = useState('');
+  const [form, setForm] = useState({ name: '', muscleGroup: 'Pectoraux', notes: '', bilateral: false, goalWeight: '', repMax: '12', step: '' });
+  const [editing, setEditing] = useState(false);
+
+  const save = () => {
+    if (!form.name.trim()) return;
+    const data = { ...form, goalWeight: form.goalWeight ? +form.goalWeight : null, repMax: form.repMax === '' ? 0 : +form.repMax, step: +form.step || 0 };
+    if (editing && sel) {
+      setExs(p => p.map(e => e.id === sel.id ? { ...e, ...data } : e));
+      setSel(p => ({ ...p, ...data })); setView('detail');
+    } else {
+      setExs(p => [...p, { id: uid(), ...data, createdAt: nowISO() }]); setView('list');
+    }
+  };
+
+  const del = id => { setExs(p => p.filter(e => e.id !== id)); setView('list'); };
+
+  const grouped = useMemo(() => {
+    const f = filter.toLowerCase();
+    const list = exs.filter(e => !f || e.name.toLowerCase().includes(f) || e.muscleGroup.toLowerCase().includes(f));
+    return MUSCLES.reduce((g, m) => {
+      const items = list.filter(e => e.muscleGroup === m);
+      if (items.length) g[m] = items;
+      return g;
+    }, {});
+  }, [exs, filter]);
+
+  if (view === 'detail' && sel) {
+    const hist = wos
+      .filter(w => w.exercises.some(e => e.exerciseId === sel.id))
+      .sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10)
+      .map(w => {
+        const ex = w.exercises.find(e => e.exerciseId === sel.id);
+        const vol = ex.sets.reduce((a, s) => a + (+s.weight || 0) * (+s.reps || 0), 0);
+        const maxW = ex.sets.reduce((a, s) => +s.weight > a ? +s.weight : a, 0);
+        return { date: w.date, sets: ex.sets, vol, maxW };
+      });
+    const bw = bestWeight(sel.id);
+    const lp = lastPerf(sel.id);
+    const chartData = [...hist].reverse().map(h => ({ d: fmtS(h.date), v: h.maxW }));
+    const rmData = [...hist].reverse().map(h => ({ d: fmtS(h.date), v: h.sets.reduce((b, st) => { const v = +st.reps > 12 ? 0 : oneRM(st.weight, st.reps); return v > b ? v : b; }, 0) })).filter(x => x.v > 0);
+    const now2 = Date.now();
+    const allWos = wos.filter(w => w.exercises.some(e => e.exerciseId === sel.id));
+    const fWeek = allWos.filter(w => now2 - new Date(w.date) <= 7 * 86400000).length;
+    const fMonth = allWos.filter(w => now2 - new Date(w.date) <= 30 * 86400000).length;
+    const goalPct = sel.goalWeight && bw > 0 ? Math.min(100, Math.round(bw / sel.goalWeight * 100)) : null;
+
+    return html`
+      <div style=${{ padding:16, paddingTop:24 }}>
+        <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+          <${BackBar} title=${sel.name} onBack=${() => setView('list')} />
+          <button onClick=${() => { setForm({ name:sel.name, muscleGroup:sel.muscleGroup, notes:sel.notes||'', bilateral:sel.bilateral||false, goalWeight:sel.goalWeight||'', repMax:String(sel.repMax !== undefined ? sel.repMax : 12), step:String(sel.step || '') }); setEditing(true); setView('form'); }} style=${{ background:C.card2, border:'1px solid '+C.border, borderRadius:10, padding:'6px 14px', color:C.text, cursor:'pointer', fontSize:13, fontWeight:600 }}>Modifier</button>
+        </div>
+        <div style=${{ ...card(C), marginBottom:12 }}>
+          <div style=${{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:8 }}>
+            <span style=${tagS(C)}>${sel.muscleGroup}</span>
+            ${sel.bilateral ? html`<span style=${tagS(C, C.accent)}>D/G</span>` : null}
+            ${bw > 0 ? html`<span style=${tagS(C, C.amber)}>${bw} kg</span>` : null}
+          </div>
+          <div style=${{ display:'flex', gap:10, marginBottom:8 }}>
+            ${[[fWeek, 'sem.', C.green], [fMonth, 'mois', C.accent], [allWos.length, 'total', C.amber]].map(([val, lbl, col]) => html`
+              <div key=${lbl} style=${{ ...card(C), padding:'8px 12px', flex:1, textAlign:'center', background:C.card2 }}>
+                <div style=${{ fontWeight:700, fontSize:16, color:col }}>${val}x</div>
+                <div style=${{ fontSize:10, color:C.muted }}>${lbl}</div>
+              </div>
+            `)}
+          </div>
+          ${lp.length > 0 ? html`<div style=${{ color:C.muted, fontSize:13, marginBottom:4 }}>Dernière : ${lp.map(s => s.weight + '×' + s.reps).join(' / ')}</div>` : null}
+          ${sel.notes ? html`<div style=${{ color:C.muted, fontSize:13, fontStyle:'italic' }}>📝 ${sel.notes}</div>` : null}
+        </div>
+        ${goalPct !== null ? html`
+          <div style=${{ ...card(C), marginBottom:12, background:goalPct >= 100 ? C.green+'15' : C.aGlow, border:'1px solid '+(goalPct >= 100 ? C.green : C.accent)+'44' }}>
+            <div style=${{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+              <span style=${{ fontSize:13, fontWeight:700 }}>Objectif : ${sel.goalWeight} kg</span>
+              <span style=${{ fontSize:13, fontWeight:700, color:goalPct >= 100 ? C.green : C.accent }}>${goalPct}%</span>
+            </div>
+            <div style=${{ height:8, background:C.card2, borderRadius:4, overflow:'hidden' }}>
+              <div style=${{ height:'100%', background:goalPct >= 100 ? C.green : C.accent, width:goalPct+'%', borderRadius:4 }}></div>
+            </div>
+            ${goalPct < 100 ? html`<div style=${{ fontSize:12, color:C.muted, marginTop:4 }}>Il te reste ${(sel.goalWeight - bw).toFixed(1)} kg</div>` : html`<div style=${{ fontSize:12, color:C.green, marginTop:4, fontWeight:700 }}>🏆 Objectif atteint !</div>`}
+          </div>
+        ` : null}
+        ${chartData.length > 1 ? html`
+          <div style=${{ ...card(C), marginBottom:12 }}>
+            <div style=${{ fontWeight:700, fontSize:13, marginBottom:8 }}>Charge max par séance</div>
+            <${SvgLine} data=${chartData} color=${C.accent} />
+          </div>
+        ` : null}
+        ${rmData.length > 1 ? html`
+          <div style=${{ ...card(C), marginBottom:12 }}>
+            <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8 }}>
+              <div style=${{ fontWeight:700, fontSize:13 }}>1RM estimé par séance</div>
+              <div style=${{ fontSize:12, color:C.green, fontWeight:700 }}>${rmData[rmData.length - 1].v} kg ${rmData[rmData.length - 1].v >= rmData[0].v ? '(' + (rmData[rmData.length - 1].v - rmData[0].v >= 0 ? '+' : '') + (rmData[rmData.length - 1].v - rmData[0].v) + ')' : '(' + (rmData[rmData.length - 1].v - rmData[0].v) + ')'}</div>
+            </div>
+            <${SvgLine} data=${rmData} color=${C.green} />
+            <div style=${{ fontSize:10, color:C.muted, marginTop:4 }}>Formule d'Epley, séries de 12 reps maximum. Estimation, pas un max testé.</div>
+          </div>
+        ` : null}
+        ${hist.length > 0 ? html`
+          <div>
+            <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, marginBottom:8 }}>Historique</div>
+            ${hist.map((hh, i) => html`
+              <div key=${i} style=${{ ...card(C), marginBottom:8 }}>
+                <div style=${{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+                  <div style=${{ fontSize:13, color:C.muted }}>${fmtDate(hh.date)}</div>
+                  <div style=${{ fontSize:13, color:C.amber, fontWeight:700 }}>${Math.round(hh.vol).toLocaleString('fr')} kg</div>
+                </div>
+                <div style=${{ display:'flex', gap:5, flexWrap:'wrap' }}>
+                  ${hh.sets.map((st, j) => html`<span key=${j} style=${chipS(C)}>${st.weight}×${st.reps}</span>`)}
+                </div>
+              </div>
+            `)}
+          </div>
+        ` : null}
+        <${ConfirmDel} onConfirm=${() => del(sel.id)} label="Supprimer l'exercice" />
+      </div>
+    `;
+  }
+
+  if (view === 'form') return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <${BackBar} title=${editing ? 'Modifier' : 'Nouvel exercice'} onBack=${() => setView(editing ? 'detail' : 'list')} />
+      <div style=${{ display:'flex', flexDirection:'column', gap:14, marginTop:16 }}>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Nom</label>
+          <input style=${inpS(C)} placeholder="Ex : Developpe couche..." value=${form.name} onInput=${e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
+        </div>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Groupe musculaire</label>
+          <select value=${form.muscleGroup} onChange=${e => setForm(f => ({ ...f, muscleGroup: e.target.value }))} style=${{ ...inpS(C), cursor:'pointer' }}>
+            ${MUSCLES.map(m => html`<option key=${m}>${m}</option>`)}
+          </select>
+        </div>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Objectif de charge (kg)</label>
+          <input type="number" inputMode="decimal" style=${inpS(C)} placeholder="Ex : 100" value=${form.goalWeight} onInput=${e => setForm(f => ({ ...f, goalWeight: e.target.value }))} />
+        </div>
+        <div style=${{ ...card(C), padding:12 }}>
+          <div style=${{ fontSize:13, fontWeight:700, marginBottom:4 }}>Montée de charge automatique</div>
+          <div style=${{ fontSize:12, color:C.muted, marginBottom:10 }}>Si toutes les séries (3 minimum) atteignent le plafond de reps, la charge de la séance suivante monte seule. Plafond à 0 : désactivé.</div>
+          <div style=${{ display:'flex', gap:10 }}>
+            <div style=${{ flex:1 }}>
+              <label style=${{ display:'block', color:C.muted, fontSize:12, marginBottom:4, fontWeight:600 }}>Plafond de reps</label>
+              <input type="number" inputMode="numeric" style=${inpS(C)} placeholder="12" value=${form.repMax} onInput=${e => setForm(f => ({ ...f, repMax: e.target.value }))} />
+            </div>
+            <div style=${{ flex:1 }}>
+              <label style=${{ display:'block', color:C.muted, fontSize:12, marginBottom:4, fontWeight:600 }}>Pas de charge (kg)</label>
+              <input type="number" inputMode="decimal" step="0.25" style=${inpS(C)} placeholder="auto" value=${form.step} onInput=${e => setForm(f => ({ ...f, step: e.target.value }))} />
+              <div style=${{ display:'flex', gap:5, marginTop:6, flexWrap:'wrap' }}>
+                ${['0.5', '1', '2.5', '5'].map(v => html`<button key=${v} onClick=${() => setForm(f => ({ ...f, step: v }))} style=${{ background:form.step === v ? C.aGlow : 'none', border:'1px solid '+(form.step === v ? C.accent : C.border), borderRadius:20, padding:'3px 10px', color:form.step === v ? C.accent : C.muted, cursor:'pointer', fontSize:11, fontWeight:600 }}>${v.replace('.', ',')}</button>`)}
+              </div>
+              <div style=${{ fontSize:10, color:C.muted, marginTop:5 }}>Vide : auto (1 kg isolation et poulie, 2,5 kg sinon). Sert aux boutons − / + et à la montée de charge.</div>
+            </div>
+          </div>
+        </div>
+        <div style=${{ display:'flex', alignItems:'center', gap:12 }}>
+          <input type="checkbox" id="bilat" checked=${form.bilateral} onChange=${e => setForm(f => ({ ...f, bilateral: e.target.checked }))} style=${{ width:18, height:18, cursor:'pointer' }} />
+          <label htmlFor="bilat" style=${{ color:C.text, fontSize:14, cursor:'pointer' }}>Exercice bilatéral (D/G)</label>
+        </div>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Note personnelle</label>
+          <textarea rows="3" style=${{ ...inpS(C), resize:'vertical', fontFamily:'inherit' }} placeholder="Conseil technique..." value=${form.notes} onInput=${e => setForm(f => ({ ...f, notes: e.target.value }))}></textarea>
+        </div>
+        <button style=${btnS(C)} onClick=${save} disabled=${!form.name.trim()}>${editing ? 'Enregistrer' : 'Créer'}</button>
+      </div>
+    </div>
+  `;
+
+  return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
+        <h2 style=${{ margin:0, fontFamily:FD, fontSize:26, fontWeight:800 }}>Exercices</h2>
+        <button style=${{ ...btnS(C), width:'auto', padding:'8px 16px', fontSize:14, borderRadius:10 }} onClick=${() => { setForm({ name:'', muscleGroup:'Pectoraux', notes:'', bilateral:false, goalWeight:'', repMax:'12', step:'' }); setEditing(false); setView('form'); }}>+ Ajouter</button>
+      </div>
+      <input style=${{ ...inpS(C), marginBottom:14 }} placeholder="Rechercher..." value=${filter} onInput=${e => setFilter(e.target.value)} />
+      ${Object.entries(grouped).map(([group, items]) => html`
+        <div key=${group} style=${{ marginBottom:16 }}>
+          <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, marginBottom:6 }}>${group}</div>
+          ${items.map(ex => {
+            const bw = bestWeight(ex.id);
+            const lp = lastPerf(ex.id);
+            return html`
+              <div key=${ex.id} style=${{ ...card(C), marginBottom:6, cursor:'pointer' }} onClick=${() => { setSel(ex); setView('detail'); }}>
+                <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div style=${{ flex:1, minWidth:0 }}>
+                    <div style=${{ fontWeight:700, fontSize:14 }}>${ex.name}</div>
+                    ${lp.length > 0 ? html`<div style=${{ color:C.muted, fontSize:12, marginTop:2 }}>${lp.map(s => s.weight + '×' + s.reps).join(' / ')}</div>` : null}
+                  </div>
+                  <div style=${{ display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
+                    ${ex.goalWeight && bw > 0 ? html`<span style=${tagS(C, +bw >= +ex.goalWeight ? C.green : C.accent)}>${Math.min(100, Math.round(bw / ex.goalWeight * 100))}%</span>` : null}
+                    ${bw > 0 ? html`<span style=${tagS(C, C.amber)}>${bw} kg</span>` : null}
+                    <span style=${{ color:C.muted, fontSize:20 }}>›</span>
+                  </div>
+                </div>
+              </div>
+            `;
+          })}
+        </div>
+      `)}
+      ${Object.keys(grouped).length === 0 ? html`<div style=${{ ...card(C), textAlign:'center', padding:32, color:C.muted }}>Aucun exercice trouvé.</div>` : null}
+    </div>
+  `;
+}
+
+// ─── PROGRESS ────────────────────────────────────────────────
+function ProgressTab({ wos, exs, prog }) {
+  const C = useC();
+  const [mo, setMo] = useState(0);
+
+  const stats = useMemo(() => {
+    const now = Date.now();
+    const sorted = [...wos].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const total = wos.length;
+    const level = getLevel(total);
+    const nextLv = LEVELS.find(l => l.min > level.min) || level;
+    const lvPct = total >= nextLv.min ? 100 : Math.round((total - level.min) / (nextLv.min - level.min) * 100);
+
+    let streak = 0;
+    const dSet = new Set(wos.map(w => ymd(new Date(w.date))));
+    let dd = new Date();
+    for (let x = 0; x < 365; x++) {
+      const k = ymd(dd);
+      if (dSet.has(k)) { streak++; dd.setDate(dd.getDate() - 1); }
+      else if (streak > 0) break;
+      else dd.setDate(dd.getDate() - 1);
+    }
+
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d2 = new Date(); d2.setDate(d2.getDate() - i);
+      const dk = ymd(d2);
+      days.push({ k: dk, label: ['D','L','M','M','J','V','S'][d2.getDay()], trained: dSet.has(dk), isToday: i === 0 });
+    }
+
+    const volByDate = sorted.slice(-10).map(w => ({
+      d: fmtS(w.date),
+      v: Math.round(w.exercises.reduce((a, ex) => a + ex.sets.reduce((b, s) => b + (+s.weight || 0) * (+s.reps || 0), 0), 0))
+    }));
+
+    const sortedMs = sorted.map(w => new Date(w.date).getTime());
+    const gaps = [];
+    for (let gi = 1; gi < sortedMs.length; gi++) gaps.push((sortedMs[gi] - sortedMs[gi-1]) / 86400000);
+    const avgGap = gaps.length ? Math.round(gaps.reduce((a, v) => a + v, 0) / gaps.length) : null;
+    const lastSess = sorted[sorted.length - 1];
+    const daysSince = lastSess ? Math.floor((now - new Date(lastSess.date)) / 86400000) : null;
+
+    const challenges = [];
+    exs.forEach(ex => {
+      const hist = wos.filter(w => w.exercises.some(e => e.exerciseId === ex.id)).sort((a, b) => new Date(b.date) - new Date(a.date));
+      if (!hist.length) return;
+      const bw = hist.reduce((m, w) => { const e = w.exercises.find(e => e.exerciseId === ex.id); return e ? e.sets.reduce((a, s) => +s.weight > a ? +s.weight : a, m) : m; }, 0);
+      if (!bw) return;
+      const last = hist[0].exercises.find(e => e.exerciseId === ex.id);
+      const lastW = last ? last.sets.reduce((a, s) => +s.weight > a ? +s.weight : a, 0) : 0;
+      const gap = bw - lastW;
+      if (gap > 0 && gap <= 5) challenges.push({ name: ex.name, gap, bw });
+    });
+
+    const prog = [];
+    exs.forEach(ex => {
+      const hist = wos.filter(w => w.exercises.some(e => e.exerciseId === ex.id)).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 2);
+      if (hist.length < 2) return;
+      const cur = hist[0].exercises.find(e => e.exerciseId === ex.id).sets;
+      const prv = hist[1].exercises.find(e => e.exerciseId === ex.id).sets;
+      const curW = cur.reduce((a, s) => +s.weight > a ? +s.weight : a, 0);
+      const prvW = prv.reduce((a, s) => +s.weight > a ? +s.weight : a, 0);
+      const curR = cur.reduce((a, s) => a + (+s.reps || 0), 0);
+      const prvR = prv.reduce((a, s) => a + (+s.reps || 0), 0);
+      if (curW > prvW) prog.push({ name: ex.name, txt: '+' + (curW - prvW) + ' kg', col: C.green });
+      else if (curR > prvR) prog.push({ name: ex.name, txt: '+' + (curR - prvR) + ' reps', col: C.accent });
+    });
+
+    const recentRecs = [];
+    wos.filter(w => now - new Date(w.date) <= 7 * 86400000).forEach(w => {
+      w.exercises.forEach(ex => {
+        const allBest = wos
+          .filter(w2 => w2.id !== w.id && w2.exercises.some(e => e.exerciseId === ex.exerciseId))
+          .reduce((b, w2) => {
+            const e = w2.exercises.find(e => e.exerciseId === ex.exerciseId);
+            return e ? e.sets.reduce((a, s) => +s.weight > a ? +s.weight : a, b) : b;
+          }, 0);
+        const thisW = ex.sets.reduce((a, s) => +s.weight > a ? +s.weight : a, 0);
+        if (thisW > allBest && thisW > 0) recentRecs.push({ name: ex.exerciseName, weight: thisW, date: w.date });
+      });
+    });
+
+    return { level, nextLv, lvPct, total, streak, days, volByDate, avgGap, daysSince, challenges, prog, recentRecs };
+  }, [wos, exs]);
+
+  const cal = (() => {
+    const base = new Date(); base.setDate(1); base.setMonth(base.getMonth() + mo);
+    const y = base.getFullYear(), m = base.getMonth();
+    const first = (new Date(y, m, 1).getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate();
+    const cnt = {}; wos.forEach(w => { const k = ymd(new Date(w.date)); cnt[k] = (cnt[k] || 0) + 1; });
+    const todayK = ymd(new Date());
+    const cells = []; for (let i = 0; i < first; i++) cells.push(null);
+    for (let d = 1; d <= dim; d++) { const k = ymd(new Date(y, m, d)); cells.push({ d, n: cnt[k] || 0, isToday: k === todayK }); }
+    return { label: new Date(y, m, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }), cells, total: cells.filter(c => c && c.n).length };
+  })();
+
+  const miles = (() => {
+    let vol = 0; wos.forEach(w => w.exercises.forEach(ex => ex.sets.forEach(st => { vol += (+st.weight || 0) * (+st.reps || 0); })));
+    const best = id => { let b = 0; wos.forEach(w => w.exercises.forEach(ex => { if (ex.exerciseId === id) ex.sets.forEach(st => { if (+st.weight > b) b = +st.weight; }); })); return b; };
+    const L = [];
+    [1, 10, 25, 50, 100, 200].forEach(n => L.push({ label: n + (n > 1 ? ' séances' : ' séance'), v: wos.length, t: n, unit: '' }));
+    [10, 50, 100, 250].forEach(n => L.push({ label: n + ' tonnes soulevées', v: vol / 1000, t: n, unit: ' t' }));
+    [100, 110, 120, 130].forEach(n => L.push({ label: 'Développé couché ' + n + ' kg', v: best('e1'), t: n, unit: ' kg' }));
+    L.push({ label: 'Décliné haltères 50 kg', v: best('e11'), t: 50, unit: ' kg' });
+    return L;
+  })();
+  const milesDone = miles.filter(x => x.v >= x.t), milesNext = miles.filter(x => x.v < x.t).sort((a, b) => b.v / b.t - a.v / a.t).slice(0, 3);
+
+  const declRows = (() => {
+    const rows = [];
+    for (let wk = 1; wk <= 12; wk++) {
+      const row = { wk };
+      ['A', 'B'].forEach(sess => {
+        const hits = wos.filter(w => w.progSess === sess && w.progWeek === wk).sort((x, y) => new Date(y.date) - new Date(x.date));
+        const ex = hits[0] && hits[0].exercises.find(e => e.exerciseId === 'e11');
+        const plan = ex && ex.rx ? ex.rx : progRx({ ...prog, week: wk }, sess);
+        let res = null;
+        if (ex) { const reps = ex.sets.map(x => +x.reps); res = { reps, met: reps.length >= plan.n && reps.every(r => r >= plan.min) }; }
+        row[sess] = { plan, res };
+      });
+      rows.push(row);
+    }
+    return rows;
+  })();
+  const best50 = (() => { let b = 0; wos.forEach(w => w.exercises.forEach(ex => { if (ex.exerciseId === 'e11') ex.sets.forEach(x => { if (+x.weight >= 50 && +x.reps > b) b = +x.reps; }); })); return b; })();
+  const phrases = ['Chaque répétition compte. Continue. 🔥', 'La régularité bat l\'intensité. 💪', 'Ton futur toi te remerciera. ⚡', 'La douleur est temporaire. La fierté est permanente. 🎯'];
+
+  return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <h2 style=${{ margin:'0 0 16px', fontFamily:FD, fontSize:26, fontWeight:800 }}>Progression</h2>
+
+      <div style=${{ ...card(C), marginBottom:14, background:'linear-gradient(135deg,'+stats.level.col+'18,'+C.card+')' }}>
+        <div style=${{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
+          <div style=${{ width:58, height:58, borderRadius:'50%', background:'linear-gradient(135deg,'+stats.level.col+','+stats.level.col+'77)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:FD, fontWeight:800, fontSize:32, color:'#0b0716', flexShrink:0 }}>${LEVELS.indexOf(stats.level) + 1}</div>
+          <div style=${{ flex:1 }}>
+            <div style=${{ fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase' }}>Niveau</div>
+            <div style=${{ fontFamily:FD, fontSize:26, fontWeight:800, color:stats.level.col }}>${stats.level.name}</div>
+            <div style=${{ fontSize:12, color:C.muted }}>${stats.total} séance${stats.total > 1 ? 's' : ''}</div>
+          </div>
+          ${stats.streak > 0 ? html`
+            <div style=${{ textAlign:'center', background:C.amber+'22', border:'1px solid '+C.amber+'44', borderRadius:12, padding:'8px 12px' }}>
+              <div style=${{ display:'flex', justifyContent:'center' }}><${Ico} name="flame" color=${C.amber} size=${22} /></div>
+              <div style=${{ fontWeight:800, fontSize:18, color:C.amber, lineHeight:1 }}>${stats.streak}</div>
+              <div style=${{ fontSize:10, color:C.muted }}>jours</div>
+            </div>
+          ` : null}
+        </div>
+        ${stats.level.min < 9999 ? html`
+          <div>
+            <div style=${{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+              <span style=${{ fontSize:11, color:C.muted }}>Vers ${stats.nextLv.name} ${stats.nextLv.icon}</span>
+              <span style=${{ fontSize:11, color:C.muted }}>${stats.total}/${stats.nextLv.min}</span>
+            </div>
+            <div style=${{ height:6, background:C.card2, borderRadius:3, overflow:'hidden' }}>
+              <div style=${{ height:'100%', background:stats.level.col, width:stats.lvPct+'%', borderRadius:3 }}></div>
+            </div>
+          </div>
+        ` : null}
+      </div>
+
+      <div style=${{ ...card(C), marginBottom:14, background:C.aGlow, border:'1px solid '+C.accent+'33', textAlign:'center', padding:'14px 16px' }}>
+        <div style=${{ fontSize:14, fontWeight:600, color:C.text, fontStyle:'italic' }}>${phrases[stats.total % phrases.length]}</div>
+      </div>
+
+      ${stats.total > 1 ? html`
+        <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14 }}>
+          <div style=${{ ...card(C), textAlign:'center', padding:12 }}>
+            <div style=${{ fontFamily:FD, fontSize:26, fontWeight:800, color:C.accent }}>${stats.avgGap !== null ? stats.avgGap + 'j' : '—'}</div>
+            <div style=${{ fontSize:11, color:C.muted, marginTop:2 }}>Entre chaque séance</div>
+          </div>
+          <div style=${{ ...card(C), textAlign:'center', padding:12 }}>
+            <div style=${{ fontFamily:FD, fontSize:26, fontWeight:800, color:stats.daysSince === 0 ? C.green : stats.daysSince <= 2 ? C.amber : C.red }}>${stats.daysSince !== null ? stats.daysSince + 'j' : '—'}</div>
+            <div style=${{ fontSize:11, color:C.muted, marginTop:2 }}>Depuis la dernière</div>
+          </div>
+        </div>
+      ` : null}
+
+      <div style=${{ ...card(C), marginBottom:14 }}>
+        <div style=${{ fontSize:12, color:C.muted, fontWeight:700, marginBottom:10 }}>ACTIVITÉ — 7 DERNIERS JOURS</div>
+        <div style=${{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:6 }}>
+          ${stats.days.map((d, i) => html`
+            <div key=${i} style=${{ textAlign:'center' }}>
+              <div style=${{ fontSize:10, color:d.isToday ? C.accent : C.muted, fontWeight:d.isToday ? 700 : 400, marginBottom:4 }}>${d.label}</div>
+              <div style=${{ width:'100%', paddingBottom:'100%', position:'relative', borderRadius:8, background:d.trained ? C.accent : C.card2, border:'1px solid '+(d.trained ? C.accent : d.isToday ? C.accent+'55' : C.border) }}>
+                ${d.trained ? html`<div style=${{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', fontSize:11, color:d.trained ? '#000' : C.muted }}>✓</div>` : null}
+              </div>
+            </div>
+          `)}
+        </div>
+      </div>
+
+      <div style=${{ ...card(C), marginBottom:14 }}>
+        <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
+          <button onClick=${() => setMo(x => x - 1)} style=${{ background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:24, padding:'0 8px' }}>‹</button>
+          <div style=${{ textAlign:'center' }}>
+            <div style=${{ fontWeight:800, fontSize:15, textTransform:'capitalize' }}>${cal.label}</div>
+            <div style=${{ fontSize:11, color:C.muted }}>${cal.total} jour${cal.total > 1 ? 's' : ''} d'entraînement</div>
+          </div>
+          <button onClick=${() => setMo(x => Math.min(0, x + 1))} style=${{ background:'none', border:'none', color:mo >= 0 ? C.border : C.muted, cursor:'pointer', fontSize:24, padding:'0 8px' }}>›</button>
+        </div>
+        <div style=${{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:5 }}>
+          ${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((l, i) => html`<div key=${'h' + i} style=${{ textAlign:'center', fontSize:10, color:C.muted, fontWeight:600 }}>${l}</div>`)}
+          ${cal.cells.map((c, i) => c ? html`
+            <div key=${i} style=${{ aspectRatio:'1', borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:c.n ? 800 : 500, color:c.n ? '#fff' : C.muted, background:c.n >= 2 ? C.green : c.n === 1 ? C.accent : C.card2, border:c.isToday ? '2px solid '+C.accent : '1px solid transparent' }}>${c.d}</div>
+          ` : html`<div key=${i}></div>`)}
+        </div>
+      </div>
+
+      <div style=${{ ...card(C), marginBottom:14 }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:4 }}>
+          <div style=${{ fontWeight:800, fontSize:15 }}>Décliné haltères, 12 semaines</div>
+          <div style=${{ fontSize:12, color:C.muted }}>${prog.finished ? 'Cycle terminé' : 'Semaine ' + prog.week + ' sur 12'}</div>
+        </div>
+        <div style=${{ fontSize:13, color:C.muted, marginBottom:10 }}>Objectif : 3 × 8 à 50 kg par haltère. Meilleure série à 50 kg : <b style=${{ color:best50 >= 8 ? C.green : C.text }}>${best50 ? best50 + ' reps' : 'pas encore'}</b></div>
+        <div style=${{ display:'grid', gridTemplateColumns:'26px 1fr 1fr', gap:4, fontSize:11, color:C.muted, fontWeight:700, marginBottom:4 }}><div></div><div>Push A</div><div>Push B</div></div>
+        ${declRows.map(r => html`
+          <div key=${r.wk} style=${{ display:'grid', gridTemplateColumns:'26px 1fr 1fr', gap:4, alignItems:'stretch', marginBottom:4, background:r.wk === prog.week && !prog.finished ? C.aGlow : 'none', borderRadius:8 }}>
+            <div style=${{ fontFamily:FD, fontWeight:800, fontSize:20, display:'flex', alignItems:'center', justifyContent:'center', color:r.wk === prog.week ? C.accent : C.muted }}>${r.wk}</div>
+            ${['A', 'B'].map(k => {
+              const c = r[k];
+              const col = c.res ? (c.res.met ? C.green : C.amber) : C.muted;
+              return html`
+                <div key=${k} style=${{ padding:'5px 6px', borderRadius:8, border:'1px solid '+(c.res ? col + '66' : C.border), background:c.res ? col + '14' : 'none' }}>
+                  <div style=${{ fontSize:12, fontWeight:700, color:c.res ? col : C.text }}>${c.plan.n}×${c.plan.r} · ${c.plan.kg} kg${c.res && c.res.met ? ' ✓' : ''}</div>
+                  ${c.res ? html`<div style=${{ fontSize:11, color:col }}>${c.res.reps.join(' · ')}</div>` : null}
+                </div>
+              `;
+            })}
+          </div>
+        `)}
+        <div style=${{ fontSize:11, color:C.muted, marginTop:6 }}>Vert : séance validée. Orange : sous la cible, la semaine ne passe pas. Les charges de Push B à venir supposent ton réglage actuel (45 kg, ou 50 kg une fois la bascule faite).</div>
+      </div>
+
+      <div style=${{ ...card(C), marginBottom:14 }}>
+        <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:10 }}>
+          <div style=${{ fontWeight:800, fontSize:15 }}>Jalons</div>
+          <div style=${{ fontSize:12, color:C.muted }}>${milesDone.length} / ${miles.length} débloqués</div>
+        </div>
+        ${milesNext.map((m, i) => html`
+          <div key=${i} style=${{ marginBottom:10 }}>
+            <div style=${{ display:'flex', justifyContent:'space-between', fontSize:13, marginBottom:4 }}>
+              <span style=${{ fontWeight:600 }}>${m.label}</span>
+              <span style=${{ color:C.muted }}>${m.unit === ' t' ? m.v.toFixed(1) : Math.round(m.v)} / ${m.t}${m.unit}</span>
+            </div>
+            <div style=${{ height:6, background:C.card2, borderRadius:3, overflow:'hidden' }}>
+              <div style=${{ height:'100%', background:C.accent, width:Math.min(100, Math.round(m.v / m.t * 100))+'%', borderRadius:3 }}></div>
+            </div>
+          </div>
+        `)}
+        ${milesDone.length > 0 ? html`
+          <div style=${{ display:'flex', gap:6, flexWrap:'wrap', marginTop:4 }}>
+            ${milesDone.map((m, i) => html`<span key=${i} style=${tagS(C, C.green)}>✓ ${m.label}</span>`)}
+          </div>
+        ` : null}
+      </div>
+
+      ${stats.challenges.length > 0 ? html`
+        <div style=${{ marginBottom:14 }}>
+          <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, marginBottom:8 }}>Tu y es presque</div>
+          ${stats.challenges.map((ch, i) => html`
+            <div key=${i} style=${{ ...card(C), marginBottom:6, display:'flex', alignItems:'center', justifyContent:'space-between', background:C.amber+'10', border:'1px solid '+C.amber+'33' }}>
+              <div>
+                <div style=${{ fontWeight:700, fontSize:14 }}>${ch.name}</div>
+                <div style=${{ fontSize:12, color:C.muted }}>Record : ${ch.bw} kg</div>
+              </div>
+              <div style=${{ textAlign:'right' }}>
+                <div style=${{ fontWeight:800, fontSize:16, color:C.amber }}>à ${ch.gap} kg</div>
+                <div style=${{ fontSize:11, color:C.muted }}>du record</div>
+              </div>
+            </div>
+          `)}
+        </div>
+      ` : null}
+
+      ${stats.recentRecs.length > 0 ? html`
+        <div style=${{ marginBottom:14 }}>
+          <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, marginBottom:8 }}>Records cette semaine</div>
+          ${stats.recentRecs.map((r, i) => html`
+            <div key=${i} style=${{ ...card(C), marginBottom:6, display:'flex', justifyContent:'space-between', alignItems:'center', background:C.green+'10', border:'1px solid '+C.green+'33' }}>
+              <div>
+                <div style=${{ fontWeight:700, fontSize:14 }}>${r.name}</div>
+                <div style=${{ fontSize:12, color:C.muted }}>${fmtDate(r.date)}</div>
+              </div>
+              <span style=${tagS(C, C.green)}>${r.weight} kg 🔥</span>
+            </div>
+          `)}
+        </div>
+      ` : null}
+
+      ${stats.volByDate.length > 1 ? html`
+        <div style=${{ ...card(C), marginBottom:14 }}>
+          <div style=${{ fontWeight:700, fontSize:13, marginBottom:8 }}>Volume par séance</div>
+          <${SvgLine} data=${stats.volByDate} color=${C.accent} h=${140} />
+        </div>
+      ` : null}
+
+      ${stats.prog.length > 0 ? html`
+        <div>
+          <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, marginBottom:8 }}>En progression</div>
+          ${stats.prog.slice(0, 6).map((pp, i) => html`
+            <div key=${i} style=${{ ...card(C), marginBottom:6, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <div style=${{ fontWeight:600, fontSize:14 }}>${pp.name}</div>
+              <span style=${tagS(C, pp.col)}>${pp.txt}</span>
+            </div>
+          `)}
+        </div>
+      ` : null}
+
+      ${wos.length === 0 ? html`
+        <div style=${{ ...card(C), textAlign:'center', padding:36, color:C.muted }}>
+          <div style=${{ display:'flex', justifyContent:'center', marginBottom:12 }}><${Ico} name="progress" color=${C.muted} size=${44} /></div>
+          <div style=${{ fontWeight:600, color:C.text }}>Aucune séance</div>
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
+// ─── WEIGHT ──────────────────────────────────────────────────
+function WeightTab({ wts, setWts, msrs, setMsrs }) {
+  const C = useC();
+  const [subTab, setSubTab] = useState('poids');
+  return html`
+    <div>
+      <div style=${{ display:'flex', borderBottom:'1px solid '+C.border, position:'sticky', top:0, background:C.bg, zIndex:10 }}>
+        ${[['poids','Poids'],['mensuration','Mensurations']].map(([id, lbl]) => html`
+          <button key=${id} onClick=${() => setSubTab(id)} style=${{ flex:1, padding:'14px 0', background:'none', border:'none', cursor:'pointer', color:subTab === id ? C.accent : C.muted, fontWeight:subTab === id ? 700 : 400, fontSize:14, borderBottom:subTab === id ? '2px solid '+C.accent : '2px solid transparent' }}>${lbl}</button>
+        `)}
+      </div>
+      ${subTab === 'poids' ? html`<${WeightSub} wts=${wts} setWts=${setWts} />` : null}
+      ${subTab === 'mensuration' ? html`<${MensSub} msrs=${msrs} setMsrs=${setMsrs} />` : null}
+    </div>
+  `;
+}
+
+function WeightSub({ wts, setWts }) {
+  const C = useC();
+  const [view, setView] = useState('main');
+  const [sel, setSel] = useState(null);
+  const [form, setForm] = useState({ weight: '', date: today(), note: '' });
+  const [preview, setPrev] = useState(null);
+  const [detPhoto, setDetPhoto] = useState(null);
+  const [goal, setGoal] = useState(null);
+  const [editGoal, setEG] = useState(false);
+  const [goalInput, setGI] = useState('');
+  const fileRef = useRef();
+
+  useEffect(() => { DB.get('rm:wgoal', null).then(v => { setGoal(v); setGI(v || ''); }); }, []);
+  useEffect(() => { DB.set('rm:wgoal', goal); }, [goal]);
+  useEffect(() => { setDetPhoto(null); if (sel && sel.hasPhoto) DB.get('rm:ph:' + sel.id, null).then(setDetPhoto); }, [sel]);
+
+  const addEntry = () => {
+    if (!form.weight) return;
+    const id = uid();
+    const entry = { id, date: form.date, weight: +form.weight, note: form.note, hasPhoto: !!preview, createdAt: nowISO() };
+    const p2 = preview ? DB.set('rm:ph:' + id, preview) : Promise.resolve();
+    p2.then(() => {
+      setWts(prev => [...prev, entry].sort((a, b) => a.date.localeCompare(b.date)));
+      setForm({ weight: '', date: today(), note: '' }); setPrev(null); setView('main');
+    });
+  };
+
+  const delEntry = id => {
+    setWts(p => p.filter(e => e.id !== id));
+    window.storage.delete('rm:ph:' + id).catch(() => {});
+    setView('main');
+  };
+
+  const sorted = [...wts].sort((a, b) => a.date.localeCompare(b.date));
+  const latest = sorted[sorted.length - 1];
+  const first = sorted[0];
+  const chartData = sorted.slice(-30).map(e => ({ d: fmtS(e.date), v: e.weight }));
+
+  const stats = useMemo(() => {
+    if (!sorted.length) return null;
+    const now = Date.now();
+    const s7 = sorted.filter(e => now - new Date(e.date) <= 7 * 86400000);
+    const s30 = sorted.filter(e => now - new Date(e.date) <= 30 * 86400000);
+    const d7 = s7.length >= 2 ? +(s7[s7.length-1].weight - s7[0].weight).toFixed(1) : null;
+    const d30 = s30.length >= 2 ? +(s30[s30.length-1].weight - s30[0].weight).toFixed(1) : null;
+    const weights = sorted.map(e => e.weight);
+    return { d7, d30, min: Math.min(...weights), max: Math.max(...weights) };
+  }, [wts]);
+
+  const dCol = d => d === null ? C.muted : d < 0 ? C.green : d > 0 ? C.red : C.muted;
+  const dStr = d => d === null ? '—' : d > 0 ? '+' + d + ' kg' : d + ' kg';
+
+  const goalProg = useMemo(() => {
+    if (!goal || !latest || !first) return null;
+    const start = first.weight, current = latest.weight, target = +goal, losing = target < start;
+    const total = Math.abs(start - target), done = Math.abs(start - current);
+    const pct = total > 0 ? Math.min(100, Math.round(done / total * 100)) : 0;
+    return { pct, remaining: Math.abs(current - target).toFixed(1), losing, achieved: losing ? current <= target : current >= target };
+  }, [goal, wts]);
+
+  if (view === 'detail' && sel) return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+        <${BackBar} title="Détail" onBack=${() => { setView('main'); setSel(null); }} />
+        <${ConfirmDel} onConfirm=${() => delEntry(sel.id)} label="Supprimer" />
+      </div>
+      <div style=${{ ...card(C), marginBottom:16 }}>
+        <div style=${{ fontFamily:FD, fontSize:48, fontWeight:800, letterSpacing:-1 }}>${sel.weight} <span style=${{ fontSize:20, color:C.muted, fontWeight:400 }}>kg</span></div>
+        <div style=${{ color:C.muted, fontSize:14, marginTop:4 }}>${fmtDate(sel.date)}</div>
+        ${sel.note ? html`<div style=${{ marginTop:12, color:C.text, fontSize:14, fontStyle:'italic', padding:'10px', background:C.card2, borderRadius:10 }}>${sel.note}</div>` : null}
+      </div>
+      ${detPhoto ? html`<img src=${detPhoto} style=${{ width:'100%', borderRadius:16, objectFit:'cover', maxHeight:400 }} alt="" />` : null}
+    </div>
+  `;
+
+  if (view === 'add') return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <${BackBar} title="Nouvelle pesée" onBack=${() => setView('main')} />
+      <div style=${{ display:'flex', flexDirection:'column', gap:14, marginTop:16 }}>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Poids (kg)</label>
+          <input type="number" inputMode="decimal" step="0.1" style=${{ ...inpS(C), fontFamily:FD, fontSize:34, fontWeight:800, textAlign:'center', padding:16 }} placeholder="72.5" value=${form.weight} onInput=${e => setForm(f => ({ ...f, weight: e.target.value }))} autoFocus />
+        </div>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Date</label>
+          <input type="date" style=${inpS(C)} value=${form.date} onChange=${e => setForm(f => ({ ...f, date: e.target.value }))} />
+        </div>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Note (optionnel)</label>
+          <input style=${inpS(C)} placeholder="Bonne forme..." value=${form.note} onInput=${e => setForm(f => ({ ...f, note: e.target.value }))} />
+        </div>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Photo (optionnel)</label>
+          <input type="file" accept="image/*" ref=${fileRef} style=${{ display:'none' }} onChange=${e => {
+            const f = e.target.files[0]; if (!f) return;
+            compressImg(f).then(d => { if (d) setPrev(d); });
+          }} />
+          ${preview ? html`
+            <div style=${{ position:'relative' }}>
+              <img src=${preview} style=${{ width:'100%', borderRadius:14, maxHeight:220, objectFit:'cover' }} alt="" />
+              <button onClick=${() => setPrev(null)} style=${{ position:'absolute', top:8, right:8, background:'rgba(0,0,0,.7)', border:'none', borderRadius:16, padding:'4px 10px', color:'white', cursor:'pointer', fontSize:12 }}>✕</button>
+            </div>
+          ` : html`<button onClick=${() => fileRef.current && fileRef.current.click()} style=${{ ...btnS(C, C.card2, C.muted), border:'1px dashed '+C.border }}>Ajouter une photo</button>`}
+        </div>
+        <button style=${btnS(C)} onClick=${addEntry} disabled=${!form.weight}>Enregistrer</button>
+      </div>
+    </div>
+  `;
+
+  return html`
+    <div style=${{ padding:16, paddingTop:16 }}>
+      <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+        <h2 style=${{ margin:0, fontFamily:FD, fontSize:26, fontWeight:800 }}>Poids</h2>
+        <button style=${{ ...btnS(C), width:'auto', padding:'8px 18px', fontSize:14, borderRadius:10 }} onClick=${() => setView('add')}>+ Ajouter</button>
+      </div>
+
+      ${!editGoal && goal && goalProg ? html`
+        <div style=${{ ...card(C), marginBottom:14, background:goalProg.achieved ? C.green+'15' : C.aGlow, border:'1px solid '+(goalProg.achieved ? C.green : C.accent)+'44' }}>
+          <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+            <div style=${{ fontSize:12, color:C.muted, fontWeight:700, textTransform:'uppercase' }}>Objectif de poids</div>
+            <button onClick=${() => { setEG(true); setGI(goal || ''); }} style=${{ background:'none', border:'none', color:C.muted, cursor:'pointer', fontSize:12 }}>Modifier</button>
+          </div>
+          ${goalProg.achieved ? html`
+            <div style=${{ textAlign:'center', padding:'8px 0' }}>
+              <div style=${{ fontSize:32, marginBottom:4 }}>🏆</div>
+              <div style=${{ fontWeight:800, fontSize:16, color:C.green }}>Objectif atteint !</div>
+            </div>
+          ` : html`
+            <div>
+              <div style=${{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+                <span style=${{ fontSize:14, fontWeight:700 }}>${latest ? latest.weight + ' kg' : '-'} → <span style=${{ color:C.accent }}>${goal} kg</span></span>
+                <span style=${{ fontSize:14, fontWeight:700, color:C.accent }}>${goalProg.pct}%</span>
+              </div>
+              <div style=${{ height:8, background:C.card2, borderRadius:4, overflow:'hidden', marginBottom:6 }}>
+                <div style=${{ height:'100%', background:'linear-gradient(90deg,'+C.accent+','+C.green+')', width:goalProg.pct+'%', borderRadius:4 }}></div>
+              </div>
+              <div style=${{ fontSize:12, color:C.muted }}>Il te reste <span style=${{ fontWeight:700, color:C.text }}>${goalProg.remaining} kg</span> à ${goalProg.losing ? 'perdre' : 'prendre'}</div>
+            </div>
+          `}
+        </div>
+      ` : null}
+
+      ${editGoal || (!goal && latest) ? html`
+        <div style=${{ ...card(C), marginBottom:14 }}>
+          <div style=${{ fontSize:13, color:C.muted, fontWeight:600, marginBottom:8 }}>${goal ? "Modifier l'objectif" : 'Définir un objectif'}</div>
+          <div style=${{ display:'flex', gap:8 }}>
+            <input type="number" inputMode="decimal" step="0.1" placeholder="Ex : 75" value=${goalInput} onInput=${e => setGI(e.target.value)} style=${{ ...inpS(C), flex:1, padding:'8px 12px', fontSize:15 }} autoFocus />
+            <button onClick=${() => { if (goalInput) { setGoal(+goalInput); setEG(false); } }} style=${{ ...btnS(C), width:'auto', padding:'8px 16px', fontSize:14, borderRadius:10 }}>OK</button>
+            ${goal ? html`<button onClick=${() => { setGoal(null); setEG(false); }} style=${{ background:'none', border:'1px solid '+C.border, borderRadius:10, padding:'8px 12px', color:C.muted, cursor:'pointer', fontSize:13 }}>✕</button>` : null}
+          </div>
+        </div>
+      ` : null}
+
+      ${latest ? html`
+        <div style=${{ ...card(C), marginBottom:16, padding:20 }}>
+          <div style=${{ fontSize:13, color:C.muted, fontWeight:700, letterSpacing:0.2, marginBottom:6 }}>Poids actuel</div>
+          <div style=${{ fontFamily:FD, fontSize:53, fontWeight:800, letterSpacing:-2, lineHeight:1 }}>${latest.weight}<span style=${{ fontSize:22, color:C.muted, fontWeight:400 }}> kg</span></div>
+          <div style=${{ color:C.muted, fontSize:13, marginTop:4 }}>${fmtDate(latest.date)}</div>
+          ${stats ? html`
+            <div style=${{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:6, marginTop:16, padding:'12px 0 0', borderTop:'1px solid '+C.border }}>
+              ${[['7j', dStr(stats.d7), dCol(stats.d7)], ['30j', dStr(stats.d30), dCol(stats.d30)], ['Min', stats.min+' kg', C.green], ['Max', stats.max+' kg', C.red]].map(([lbl, val, col]) => html`
+                <div key=${lbl} style=${{ textAlign:'center' }}>
+                  <div style=${{ fontSize:13, fontWeight:700, color:col }}>${val}</div>
+                  <div style=${{ fontSize:10, color:C.muted, marginTop:2 }}>${lbl}</div>
+                </div>
+              `)}
+            </div>
+          ` : null}
+        </div>
+      ` : null}
+
+      ${chartData.length > 1 ? html`
+        <div style=${{ ...card(C), marginBottom:16 }}>
+          <div style=${{ fontWeight:700, fontSize:13, marginBottom:8 }}>Évolution du poids</div>
+          <${SvgLine} data=${chartData} color=${C.accent} h=${150} />
+        </div>
+      ` : null}
+
+      ${sorted.length > 0 ? html`
+        <div>
+          <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, marginBottom:8 }}>Historique</div>
+          ${[...sorted].reverse().map(entry => html`
+            <div key=${entry.id} style=${{ ...card(C), marginBottom:6, cursor:'pointer', display:'flex', alignItems:'center', gap:12 }} onClick=${() => { setSel(entry); setView('detail'); }}>
+              ${entry.hasPhoto ? html`<${PhotoThumb} id=${entry.id} />` : null}
+              <div style=${{ flex:1, minWidth:0 }}>
+                <div style=${{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div style=${{ fontWeight:700, fontSize:15 }}>${entry.weight} kg</div>
+                  <div style=${{ color:C.muted, fontSize:12 }}>${fmtDate(entry.date)}</div>
+                </div>
+                ${entry.note ? html`<div style=${{ color:C.muted, fontSize:12, marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>${entry.note}</div>` : null}
+              </div>
+              <span style=${{ color:C.muted, fontSize:20 }}>›</span>
+            </div>
+          `)}
+        </div>
+      ` : html`
+        <div style=${{ ...card(C), textAlign:'center', padding:36, color:C.muted }}>
+          <div style=${{ display:'flex', justifyContent:'center', marginBottom:12 }}><${Ico} name="weight" color=${C.muted} size=${44} /></div>
+          <div style=${{ fontWeight:600, color:C.text, marginBottom:4 }}>Aucune pesée</div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function MensSub({ msrs, setMsrs }) {
+  const C = useC();
+  const [view, setView] = useState('main');
+  const [sel, setSel] = useState(null);
+  const [chartKey, setChartKey] = useState(MEASURES[0].key);
+  const emptyForm = () => { const f = { date: today() }; MEASURES.forEach(m => f[m.key] = ''); return f; };
+  const [form, setForm] = useState(emptyForm());
+
+  const save = () => {
+    const hasData = MEASURES.some(m => form[m.key] !== '');
+    if (!hasData) return;
+    const entry = { id: uid(), date: form.date || today(), createdAt: nowISO() };
+    MEASURES.forEach(m => { if (form[m.key] !== '') entry[m.key] = +form[m.key]; });
+    setMsrs(p => [...p, entry].sort((a, b) => a.date.localeCompare(b.date)));
+    setForm(emptyForm()); setView('main');
+  };
+
+  const del = id => { setMsrs(p => p.filter(e => e.id !== id)); setView('main'); };
+  const setDate = (id, d) => {
+    if (!d) return;
+    setMsrs(p => p.map(e => e.id === id ? { ...e, date: d } : e).sort((a, b) => a.date.localeCompare(b.date)));
+    setSel(x => x ? { ...x, date: d } : x);
+  };
+
+  const sorted = [...msrs].sort((a, b) => a.date.localeCompare(b.date));
+  const latest = sorted[sorted.length - 1];
+  const prev = sorted.length >= 2 ? sorted[sorted.length - 2] : null;
+  const diff = key => {
+    if (!latest || !prev || latest[key] == null || prev[key] == null) return null;
+    return +(latest[key] - prev[key]).toFixed(1);
+  };
+  const chartData = sorted.filter(e => e[chartKey] != null).map(e => ({ d: fmtS(e.date), v: e[chartKey] }));
+  const chartM = MEASURES.find(m => m.key === chartKey);
+
+  if (view === 'detail' && sel) return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+        <${BackBar} title="Mensurations" onBack=${() => { setView('main'); setSel(null); }} />
+        <${ConfirmDel} onConfirm=${() => del(sel.id)} label="Supprimer" />
+      </div>
+      <div style=${{ ...card(C), marginBottom:8, padding:'10px 14px', background:C.card2, display:'flex', alignItems:'center', justifyContent:'space-between', gap:12 }}>
+        <div style=${{ color:C.muted, fontSize:13 }}>Date de la mesure</div>
+        <input type="date" value=${sel.date} max=${today()} onChange=${e => setDate(sel.id, e.target.value)} style=${{ ...inpS(C), width:'auto', padding:'8px 10px', fontSize:14 }} />
+      </div>
+      ${MEASURES.map(m => sel[m.key] != null ? html`
+        <div key=${m.key} style=${{ ...card(C), marginBottom:6, display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 16px' }}>
+          <div style=${{ fontSize:14, color:C.muted }}>${m.label}</div>
+          <div style=${{ fontWeight:700, fontSize:16 }}>${sel[m.key]} <span style=${{ fontSize:12, color:C.muted }}>cm</span></div>
+        </div>
+      ` : null)}
+    </div>
+  `;
+
+  if (view === 'add') return html`
+    <div style=${{ padding:16, paddingTop:24 }}>
+      <${BackBar} title="Nouvelles mensurations" onBack=${() => setView('main')} />
+      <div style=${{ display:'flex', flexDirection:'column', gap:10, marginTop:16 }}>
+        <div>
+          <label style=${{ display:'block', color:C.muted, fontSize:13, marginBottom:6, fontWeight:600 }}>Date</label>
+          <input type="date" style=${inpS(C)} value=${form.date} onChange=${e => setForm(f => ({ ...f, date: e.target.value }))} />
+        </div>
+        <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, margin:'6px 0 4px' }}>Remplis uniquement ce que tu as mesuré</div>
+        ${MEASURES.map(m => html`
+          <div key=${m.key} style=${{ display:'flex', alignItems:'center', gap:10 }}>
+            <label style=${{ flex:1, fontSize:13, color:C.text }}>${m.label}</label>
+            <div style=${{ display:'flex', alignItems:'center', gap:6, width:120 }}>
+              <input type="number" inputMode="decimal" step="0.1" placeholder="—" value=${form[m.key]} onInput=${e => { const v = e.target.value; setForm(f => { const nf = { ...f }; nf[m.key] = v; return nf; }); }} style=${{ ...inpS(C), width:80, padding:'8px 10px', fontSize:14, textAlign:'center' }} />
+              <span style=${{ color:C.muted, fontSize:12, width:20 }}>cm</span>
+            </div>
+          </div>
+        `)}
+        <button style=${{ ...btnS(C), marginTop:8 }} onClick=${save}>Enregistrer</button>
+      </div>
+    </div>
+  `;
+
+  return html`
+    <div style=${{ padding:16, paddingTop:16 }}>
+      <div style=${{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+        <h2 style=${{ margin:0, fontFamily:FD, fontSize:26, fontWeight:800 }}>Mensurations</h2>
+        <button style=${{ ...btnS(C), width:'auto', padding:'8px 18px', fontSize:14, borderRadius:10 }} onClick=${() => setView('add')}>+ Ajouter</button>
+      </div>
+
+      ${latest ? html`
+        <div style=${{ ...card(C), marginBottom:14 }}>
+          <div style=${{ fontSize:13, color:C.muted, fontWeight:700, letterSpacing:0.2, marginBottom:10 }}>Dernières — ${fmtDate(latest.date)}</div>
+          ${MEASURES.map(m => {
+            if (latest[m.key] == null) return null;
+            const d = diff(m.key);
+            return html`
+              <div key=${m.key} style=${{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'7px 0', borderBottom:'1px solid '+C.border }}>
+                <div style=${{ fontSize:13, color:C.muted, flex:1 }}>${m.label}</div>
+                <div style=${{ display:'flex', alignItems:'center', gap:10 }}>
+                  ${d !== null && d !== 0 ? html`<span style=${{ fontSize:11, fontWeight:700, color:d < 0 ? C.green : C.red }}>${d > 0 ? '+' : ''}${d} cm</span>` : null}
+                  <div style=${{ fontWeight:700, fontSize:15, minWidth:52, textAlign:'right' }}>${latest[m.key]} <span style=${{ fontSize:11, color:C.muted }}>cm</span></div>
+                </div>
+              </div>
+            `;
+          })}
+        </div>
+      ` : null}
+
+      ${sorted.length > 1 ? html`
+        <div style=${{ ...card(C), marginBottom:14 }}>
+          <div style=${{ fontWeight:700, fontSize:13, marginBottom:10 }}>Courbe — ${chartM ? chartM.label : ''}</div>
+          <div style=${{ display:'flex', gap:5, flexWrap:'wrap', marginBottom:10 }}>
+            ${MEASURES.filter(m => sorted.some(e => e[m.key] != null)).map(m => html`
+              <button key=${m.key} onClick=${() => setChartKey(m.key)} style=${{ background:chartKey === m.key ? C.aGlow : 'none', border:'1px solid '+(chartKey === m.key ? C.accent : C.border), borderRadius:20, padding:'3px 10px', color:chartKey === m.key ? C.accent : C.muted, cursor:'pointer', fontSize:11, fontWeight:600 }}>${m.label.split(' ')[0]}</button>
+            `)}
+          </div>
+          ${chartData.length > 1 ? html`<${SvgLine} data=${chartData} color=${C.accent} h=${140} />` : html`<div style=${{ textAlign:'center', color:C.muted, fontSize:13, padding:'20px 0' }}>Pas assez de données.</div>`}
+        </div>
+      ` : null}
+
+      ${sorted.length > 0 ? html`
+        <div>
+          <div style=${{ color:C.muted, fontSize:13, fontWeight:700, letterSpacing:0.2, marginBottom:8 }}>Historique</div>
+          ${[...sorted].reverse().map(entry => {
+            const count = MEASURES.filter(m => entry[m.key] != null).length;
+            return html`
+              <div key=${entry.id} style=${{ ...card(C), marginBottom:6, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'space-between' }} onClick=${() => { setSel(entry); setView('detail'); }}>
+                <div>
+                  <div style=${{ fontWeight:700, fontSize:14 }}>${fmtDate(entry.date)}</div>
+                  <div style=${{ color:C.muted, fontSize:12, marginTop:2 }}>${count} mesure${count > 1 ? 's' : ''}</div>
+                </div>
+                <span style=${{ color:C.muted, fontSize:20 }}>›</span>
+              </div>
+            `;
+          })}
+        </div>
+      ` : html`
+        <div style=${{ ...card(C), textAlign:'center', padding:36, color:C.muted }}>
+          <div style=${{ display:'flex', justifyContent:'center', marginBottom:12 }}><${Ico} name="ruler" color=${C.muted} size=${44} /></div>
+          <div style=${{ fontWeight:600, color:C.text, marginBottom:4 }}>Aucune mensuration</div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+// ─── MOUNT ───────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${RepMemo} />`);
+if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+}
+</script>
+</body>
+</html>
